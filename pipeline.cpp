@@ -70,12 +70,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#if defined USE_LIKWID
-extern "C" {
-#include <likwid/likwid.h>
-}
-#endif
-
 #if defined USE_PMC
 #include "pmc.h"
 
@@ -190,13 +184,6 @@ void filter(FilteredDataType filteredData, const InputDataType inputData, const 
 
 #pragma omp parallel
   {
-#if defined USE_LIKWID
-    if (iteration > 0) {
-      likwid_markerThreadInit();
-      likwid_markerStartRegion("FIR filter");
-    }
-#endif
-
 #if defined USE_PMC
     PerformanceCounter pmc0(PMC0, 0);
 
@@ -679,11 +666,6 @@ void filter(FilteredDataType filteredData, const InputDataType inputData, const 
     }
 #endif
 
-#if defined USE_LIKWID
-    if (iteration > 0)
-      likwid_markerStopRegion("FIR filter");
-#endif
-
 #if defined USE_PMC
     if (iteration > 0) {
       pmc0.stop();
@@ -873,13 +855,6 @@ void FFT(FilteredDataType filteredData, unsigned iteration)
 
 #pragma omp parallel
   {
-#if defined USE_LIKWID
-    if (iteration > 0) {
-      likwid_markerThreadInit();
-      likwid_markerStartRegion("FFT");
-    }
-#endif
-
 #if defined USE_PMC
     PerformanceCounter pmc0(PMC0, 0);
 
@@ -900,11 +875,6 @@ void FFT(FilteredDataType filteredData, unsigned iteration)
 #pragma omp atomic
       nrEvents0 += pmc0.read();
     }
-#endif
-
-#if defined USE_LIKWID
-    if (iteration > 0)
-      likwid_markerStopRegion("FFT");
 #endif
   }
 
@@ -935,13 +905,6 @@ void transpose(
 
 #pragma omp parallel
   {
-#if defined USE_LIKWID
-    if (iteration > 0) {
-      likwid_markerThreadInit();
-      likwid_markerStartRegion("transpose");
-    }
-#endif
-
 #if defined USE_PMC
     PerformanceCounter pmc0(PMC0, 0);
 
@@ -1206,11 +1169,6 @@ void transpose(
       nrEvents0 += pmc0.read();
     }
 #endif
-
-#if defined USE_LIKWID
-    if (iteration > 0)
-      likwid_markerStopRegion("transpose");
-#endif
   }
 
 #if defined USE_PMC
@@ -1233,13 +1191,6 @@ void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin
 
 #pragma omp parallel
   {
-#if defined USE_LIKWID
-    if (iteration > 0) {
-      likwid_markerThreadInit();
-      likwid_markerStartRegion("delays");
-    }
-#endif
-
 #if defined USE_PMC
     PerformanceCounter pmc0(PMC0, 0);
 
@@ -1329,12 +1280,6 @@ void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin
 #endif
       }
     }
-
-#if defined USE_LIKWID
-    if (iteration > 0)
-      likwid_markerStopRegion("delays");
-#endif
-
 #if defined USE_PMC
     if (iteration > 0) {
       pmc0.stop();
@@ -1449,11 +1394,6 @@ void fused_FIRfilterInit(
   uint64_t &FIRfilterTime
 )
 {
-#if defined USE_LIKWID
-  if (iteration > 0)
-    likwid_markerStartRegion("FIR filter");
-#endif
-
   FIRfilterTime -= rdtsc();
   // fill FIR filter history
 
@@ -1465,11 +1405,6 @@ void fused_FIRfilterInit(
 	history[real_imag][time][channel] = inputData[input][real_imag][time][channel];
 
   FIRfilterTime += rdtsc();
-
-#if defined USE_LIKWID
-  if (iteration > 0)
-    likwid_markerStopRegion("FIR filter");
-#endif
 }
 
 
@@ -1483,11 +1418,6 @@ void fused_FIRfilter(
   uint64_t &FIRfilterTime
 )
 {
-#if defined USE_LIKWID
-  if (iteration > 0)
-    likwid_markerStartRegion("FIR filter");
-#endif
-
   FIRfilterTime -= rdtsc();
 
   for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
@@ -1508,21 +1438,11 @@ void fused_FIRfilter(
   }
 
   FIRfilterTime += rdtsc();
-
-#if defined USE_LIKWID
-  if (iteration > 0)
-    likwid_markerStopRegion("FIR filter");
-#endif
 }
 
 
 void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/, unsigned iteration, uint64_t &FFTtime)
 {
-#if defined USE_LIKWID
-  if (iteration > 0)
-    likwid_markerStartRegion("FFT");
-#endif
-
   FFTtime -= rdtsc();
 
 //  for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++)
@@ -1531,11 +1451,6 @@ void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNEL
     DftiComputeForward(handle, filteredData[0][REAL], filteredData[0][IMAG]);
 
   FFTtime += rdtsc();
-
-#if defined USE_LIKWID
-  if (iteration > 0)
-    likwid_markerStopRegion("FFT");
-#endif
 }
 
 
@@ -1598,11 +1513,6 @@ void fused_Transpose(
   uint64_t &trsTime
 )
 {
-#if defined USE_LIKWID
-  if (iteration > 0)
-    likwid_markerStartRegion("transpose");
-#endif
-
   trsTime -= rdtsc();
 
 #if defined BANDPASS_CORRECTION && !defined DELAY_COMPENSATION
@@ -1639,11 +1549,6 @@ void fused_Transpose(
   }
 
   trsTime += rdtsc();
-
-#if defined USE_LIKWID
-  if (iteration > 0)
-    likwid_markerStopRegion("transpose");
-#endif
 }
 
 
@@ -1666,11 +1571,6 @@ void fused(
 
 #pragma omp parallel reduction(+: FIRfilterTime, FFTtime, trsTime)
   {
-#if defined USE_LIKWID
-    likwid_markerThreadInit();
-    likwid_markerStartRegion("fused");
-#endif
-
 #pragma omp for schedule(dynamic)
     for (unsigned input = 0; input < NR_INPUTS; input ++) {
       float history[COMPLEX][NR_TAPS][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
@@ -1704,10 +1604,6 @@ void fused(
                 input, majorTime, iteration, trsTime);
       }
     }
-
-#if defined USE_LIKWID
-    likwid_markerStopRegion("fused");
-#endif
   }
 
   if (iteration > 0)
@@ -1910,13 +1806,6 @@ void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedD
 
 #pragma omp parallel
   {
-#if defined USE_LIKWID
-    likwid_markerThreadInit();
-
-    if (iteration > 0)
-      likwid_markerStartRegion("Correlate");
-#endif
-
 #if defined USE_PMC
     PerformanceCounter pmc0(PMC0, 0);
 
@@ -2235,11 +2124,6 @@ void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedD
     }
 #endif
 
-#if defined USE_LIKWID
-    if (iteration > 0)
-      likwid_markerStopRegion("Correlate");
-#endif
-
 #if defined USE_PMC
     if (iteration > 0) {
       pmc0.stop();
@@ -2488,10 +2372,6 @@ int main(int argc, char **argv)
 
   PowerSensor::State startState, stopState;
 
-#if defined USE_LIKWID
-  likwid_markerInit();
-#endif
-
 #pragma omp target
   fftInit();
 
@@ -2546,10 +2426,6 @@ int main(int argc, char **argv)
 	       ", " << totalNrOperations / PowerSensor::Joules(startState, stopState) * 1e-9 << " GFLOPS/W"
 #endif
 	       << std::endl;
-#endif
-
-#if defined USE_LIKWID
-  likwid_markerClose();
 #endif
 
 #pragma omp target
