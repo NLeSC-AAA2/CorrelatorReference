@@ -1,15 +1,5 @@
 // (C) 2013,2014,2015 John Romein/ASTRON
 
-// Xeon Phi:
-// icpc -DMEASURE_POWER -mavx -mcmodel=large -openmp -mkl -O3 -w Pipeline.cc -I/home/romein/packages/likwid-3.1.3/src/includes  -I/home/romein/packages/likwid-3.1.3/GCC -L/home/romein/projects/PowerSensor/lib/x86_64 -lPowerSensor  && numactl --physcpubind=0-7,16-23 a.out
-
-// Xeon:
-// icpc -D__AVX2__ -DMEASURE_POWER -I/cm/shared/package/likwid/include -no-offload -qno-openmp-offload -wd3180 -openmp -mcmodel=large -mavx -g -O3 Pipeline.cc ../../LikwidPowerSensor/libPowerSensor.cc -w -mkl -Xlinker -rpath=/cm/shared/package/likwid/lib -L/cm/shared/package/likwid/lib -lnuma -llikwid && KMP_AFFINITY=compact a.out
-//
-// gcc:
-//
-//g++ -fopenmp -mcmodel=large -fPIC -march=sandybridge -g -O3 Pipeline.cc -L$MKL_LIB -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread
-
 #if defined __AVX512F__
 #define _mm512_storenrngo_ps _mm512_stream_ps
 #endif
@@ -186,7 +176,6 @@ static PowerSensor powerSensor("/dev/ttyUSB0", "/tmp/sensor_readings");
 #else
 static PowerSensor powerSensor;
 #endif
-
 
 
 #if defined __AVX__ && !defined __MIC__
@@ -747,8 +736,10 @@ void copyInputData(int stream)
   size_t copy_size = sizeof(InputDataType);
 #endif
 
+#if !defined CORRECTNESS_TEST
 #pragma omp critical (cout)
   cout << "input data: time = " << copy_time << "s (total), " << "BW = " << sizeof(InputDataType) / copy_time / 1e9 << " GB/s" << std::endl;
+#endif
 }
 
 
@@ -2329,6 +2320,7 @@ void testCorrelator()
 
 void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, const PowerSensor::State &startState, const PowerSensor::State &stopState, double weight = 1)
 {
+#if !defined CORRECTNESS_TEST
   powerSensor.mark(startState, msg);
 
   double runTime = PowerSensor::seconds(startState, stopState) * weight;
@@ -2342,6 +2334,7 @@ void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, const Powe
 	    ", " << nrOperations * 1e-9 / energy << " GFLOPS/W"
 #endif
 	    << std::endl;
+#endif
 }
 
 
@@ -2517,10 +2510,12 @@ int main(int argc, char **argv)
 #pragma omp target
   fftInit();
 
-  //testFused(); return 0;
-  //testFIR_Filter(); return 0;
-  //testTranspose(); return 0;
-  //testCorrelator(); return 0;
+#if defined CORRECTNESS_TEST
+  testFused();
+  testFIR_Filter();
+  testTranspose();
+  testCorrelator();
+#endif
   omp_set_nested(1);
 
 #if defined BANDPASS_CORRECTION
@@ -2555,6 +2550,7 @@ int main(int argc, char **argv)
 
   stopState = powerSensor.read();
 
+#if !defined CORRECTNESS_TEST
   cout << "total: " << PowerSensor::seconds(startState, stopState) << " s"
 	       ", " << totalNrOperations / PowerSensor::seconds(startState, stopState) * 1e-12 << " TFLOPS"
 #if defined MEASURE_POWER
@@ -2562,6 +2558,7 @@ int main(int argc, char **argv)
 	       ", " << totalNrOperations / PowerSensor::Joules(startState, stopState) * 1e-9 << " GFLOPS/W"
 #endif
 	       << std::endl;
+#endif
 
 #if defined USE_LIKWID
   likwid_markerClose();

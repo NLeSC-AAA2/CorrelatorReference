@@ -17,5 +17,5 @@ clean:
 	$(AT)rm pipeline
 
 pipeline: pipeline.cpp
-	$(AT)g++ -fopenmp -mcmodel=large -fPIC -march=sandybridge -g -O3 -o $@ $< -L$(MKL_LIB) -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread
+	$(AT)g++ -fopenmp -DCORRECTNESS_TEST -mcmodel=large -fPIC -march=sandybridge -g -O3 -o $@ $< -L$(MKL_LIB) -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread
 
