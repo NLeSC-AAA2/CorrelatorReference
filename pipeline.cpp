@@ -70,17 +70,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#if defined USE_PMC
-#include "pmc.h"
-
-//#define PMC0	PerformanceCounter::L2_DATA_READ_MISS_MEM_FILL
-//#define PMC0	PerformanceCounter::L2_DATA_WRITE_MISS_MEM_FILL
-//#define PMC0	PerformanceCounter::HWP_L2MISS
-//#define PMC0	PerformanceCounter::L2_VICTIM_REQ_WITH_DATA
-#define PMC0	PerformanceCounter::SNP_HITM_L2
-
-#endif
-
 #if defined __AVX512F__
 inline __m512 load_8_bit_samples(const signed char *ptr)
 {
@@ -177,20 +166,8 @@ std::ostream &operator << (std::ostream &str, __m256 v)
 
 void filter(FilteredDataType filteredData, const InputDataType inputData, const FilterWeightsType filterWeights, unsigned iteration)
 {
-#if defined USE_PMC
-  uint64_t nrEvents0 = 0;
-  double   startTime = omp_get_wtime();
-#endif
-
 #pragma omp parallel
   {
-#if defined USE_PMC
-    PerformanceCounter pmc0(PMC0, 0);
-
-    if (iteration > 0)
-      pmc0.start();
-#endif
-
 #if defined __AVX512F__ || defined __MIC__
 #pragma noprefetch
 #pragma omp for collapse(3) schedule(dynamic)
@@ -665,22 +642,7 @@ void filter(FilteredDataType filteredData, const InputDataType inputData, const 
       }
     }
 #endif
-
-#if defined USE_PMC
-    if (iteration > 0) {
-      pmc0.stop();
-#pragma omp atomic
-      nrEvents0 += pmc0.read();
-    }
-#endif
   }
-
-#if defined USE_PMC
-  double stopTime = omp_get_wtime();
-
-  if (iteration > 0)
-    clog << "fir filter: " << 64 * nrEvents0 / (stopTime - startTime) * 1e-9 << " GB/s" << std::endl;
-#endif
 }
 
 
@@ -848,42 +810,15 @@ void fftDestroy()
 
 void FFT(FilteredDataType filteredData, unsigned iteration)
 {
-#if defined USE_PMC
-  uint64_t nrEvents0 = 0;
-  double   startTime = omp_get_wtime();
-#endif
-
 #pragma omp parallel
   {
-#if defined USE_PMC
-    PerformanceCounter pmc0(PMC0, 0);
-
-    if (iteration > 0)
-      pmc0.start();
-#endif
-
 #pragma omp for collapse(2) schedule(dynamic)
     for (int input = 0; input < NR_INPUTS; input ++)
 //      for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
 //    DftiComputeForward(handle, filteredData[input][time][REAL], filteredData[input][time][IMAG]);
       for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time += NR_SAMPLES_PER_MINOR_LOOP)
 	DftiComputeForward(handle, filteredData[input][time][REAL], filteredData[input][time][IMAG]);
-
-#if defined USE_PMC
-    if (iteration > 0) {
-      pmc0.stop();
-#pragma omp atomic
-      nrEvents0 += pmc0.read();
-    }
-#endif
   }
-
-#if defined USE_PMC
-  double stopTime = omp_get_wtime();
-
-  if (iteration > 0)
-    clog << "fft: " << 64 * nrEvents0 / (stopTime - startTime) * 1e-9 << " GB/s" << std::endl;
-#endif
 }
 
 
@@ -898,20 +833,8 @@ void transpose(
   unsigned iteration
 )
 {
-#if defined USE_PMC
-  uint64_t nrEvents0 = 0;
-  double   startTime = omp_get_wtime();
-#endif
-
 #pragma omp parallel
   {
-#if defined USE_PMC
-    PerformanceCounter pmc0(PMC0, 0);
-
-    if (iteration > 0)
-      pmc0.start();
-#endif
-
 #if defined __AVX512F__ || defined __MIC__
 #if 0
     int	  stride  = NR_SAMPLES_PER_CHANNEL * NR_CHANNELS;
@@ -1161,22 +1084,7 @@ void transpose(
       }
     }
 #endif
-
-#if defined USE_PMC
-    if (iteration > 0) {
-      pmc0.stop();
-#pragma omp atomic
-      nrEvents0 += pmc0.read();
-    }
-#endif
   }
-
-#if defined USE_PMC
-  double stopTime = omp_get_wtime();
-
-  if (iteration > 0)
-    clog << "transpose: " << 64 * nrEvents0 / (stopTime - startTime) * 1e-9 << " GB/s" << std::endl;
-#endif
 }
 
 
@@ -1184,20 +1092,8 @@ void transpose(
 
 void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin, const DelaysType delaysAfterEnd, double subbandFrequency, unsigned iteration)
 {
-#if defined USE_PMC
-  uint64_t nrEvents0 = 0;
-  double   startTime = omp_get_wtime();
-#endif
-
 #pragma omp parallel
   {
-#if defined USE_PMC
-    PerformanceCounter pmc0(PMC0, 0);
-
-    if (iteration > 0)
-      pmc0.start();
-#endif
-
 #pragma omp for collapse(2)
     for (unsigned inputMajor = 0; inputMajor < ALIGN(NR_INPUTS, VECTOR_SIZE) / VECTOR_SIZE; inputMajor ++) {
       for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
@@ -1280,21 +1176,7 @@ void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin
 #endif
       }
     }
-#if defined USE_PMC
-    if (iteration > 0) {
-      pmc0.stop();
-#pragma omp atomic
-      nrEvents0 += pmc0.read();
-    }
-#endif
   }
-
-#if defined USE_PMC
-  double stopTime = omp_get_wtime();
-
-  if (iteration > 0)
-    clog << "delays: " << 64 * nrEvents0 / (stopTime - startTime) * 1e-9 << " GB/s" << std::endl;
-#endif
 }
 
 
@@ -1799,20 +1681,8 @@ inline void write_visibilities(VisibilitiesType visibilities, int channel, int b
 
 void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedData, unsigned iteration)
 {
-#if defined USE_PMC
-  uint64_t nrEvents0 = 0;
-  double   startTime = omp_get_wtime();
-#endif
-
 #pragma omp parallel
   {
-#if defined USE_PMC
-    PerformanceCounter pmc0(PMC0, 0);
-
-    if (iteration > 0)
-      pmc0.start();
-#endif
-
 #if 1 && defined __AVX512F__
     // correlate blocks of 32x32 inputs
 #define NR_32X32_BLOCKS ((ALIGN(NR_INPUTS, 32) / 32) * (ALIGN(NR_INPUTS, 32) / 32 + 1) / 2)
@@ -2123,22 +1993,7 @@ void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedD
       }
     }
 #endif
-
-#if defined USE_PMC
-    if (iteration > 0) {
-      pmc0.stop();
-#pragma omp atomic
-      nrEvents0 += pmc0.read();
-    }
-#endif
   }
-
-#if defined USE_PMC
-  double stopTime = omp_get_wtime();
-
-  if (iteration > 0)
-    clog << "correlate: " << 64 * nrEvents0 / (stopTime - startTime) * 1e-9 << " GB/s" << std::endl;
-#endif
 }
 
 
