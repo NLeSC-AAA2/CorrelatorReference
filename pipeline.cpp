@@ -71,12 +71,12 @@
 #include <unistd.h>
 
 #if defined __AVX512F__
-inline __m512 load_8_bit_samples(const signed char *ptr)
+static inline __m512 load_8_bit_samples(const signed char *ptr)
 {
   return _mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(* (const __m128i *) ptr));
 }
 #elif defined __MIC__
-inline __m512 load_8_bit_samples(const signed char *ptr)
+static inline __m512 load_8_bit_samples(const signed char *ptr)
 {
   return _mm512_extload_ps(ptr, _MM_UPCONV_PS_SINT8, _MM_BROADCAST32_NONE, _MM_HINT_NONE);
 }
@@ -89,7 +89,7 @@ std::ostream& cerr = std::cerr;
 std::ostream& clog = std::clog;
 
 
-inline uint64_t rdtsc()
+static inline uint64_t rdtsc()
 {
   unsigned low, high;
 
@@ -164,7 +164,7 @@ std::ostream &operator << (std::ostream &str, __m256 v)
 
 ////// FIR filter
 
-void filter(FilteredDataType filteredData, const InputDataType inputData, const FilterWeightsType filterWeights, unsigned iteration)
+static void filter(FilteredDataType filteredData, const InputDataType inputData, const FilterWeightsType filterWeights, unsigned iteration)
 {
 #pragma omp parallel
   {
@@ -646,7 +646,7 @@ void filter(FilteredDataType filteredData, const InputDataType inputData, const 
 }
 
 
-void copyInputData(int stream)
+static void copyInputData(int stream)
 {
   //int8_t *inputDataPtr = &inputData[0][0][0][0];
 
@@ -672,16 +672,15 @@ void copyInputData(int stream)
 }
 
 
-void FIR_filter(int stream, unsigned iteration)
+static void FIR_filter(int stream, unsigned iteration)
 {
 #pragma omp target map(to:iteration)
   filter(filteredData, inputData[stream], filterWeights, iteration);
 }
 
 
-void setInputTestPattern(InputDataType inputData)
+static void setInputTestPattern(InputDataType inputData)
 {
-#if 1
   signed char count = 64;
 
   for (unsigned input = 0; input < NR_INPUTS; input ++)
@@ -689,9 +688,6 @@ void setInputTestPattern(InputDataType inputData)
       for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1; time ++)
 	for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
 	  inputData[input][ri][time][channel] = count ++;
-#else
-  memset(inputData, 0, sizeof inputData);
-#endif
 
   if (NR_INPUTS > 9 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 12) {
     inputData[9][REAL][98 + NR_TAPS - 1][12] = 4;
@@ -700,7 +696,7 @@ void setInputTestPattern(InputDataType inputData)
 }
 
 
-void setFilterWeightsTestPattern(FilterWeightsType filterWeights)
+static void setFilterWeightsTestPattern(FilterWeightsType filterWeights)
 {
   memset(filterWeights, 0, sizeof(FilterWeightsType));
 
@@ -711,7 +707,7 @@ void setFilterWeightsTestPattern(FilterWeightsType filterWeights)
 }
 
 
-void checkFIR_FilterTestPattern(const FilteredDataType filteredData)
+static void checkFIR_FilterTestPattern(const FilteredDataType filteredData)
 {
   for (unsigned input = 0; input < NR_INPUTS; input ++)
     for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
@@ -721,7 +717,7 @@ void checkFIR_FilterTestPattern(const FilteredDataType filteredData)
 }
 
 
-void testFIR_Filter()
+static void testFIR_Filter()
 {
 #if 0
   SmartPtr<InputDataType, SmartPtrFree<InputDataType> > inputData;
@@ -747,7 +743,7 @@ void testFIR_Filter()
 DFTI_DESCRIPTOR_HANDLE handle;
 
 
-void fftInit()
+static void fftInit()
 {
   MKL_LONG error;
 
@@ -795,7 +791,7 @@ void fftInit()
 }
 
 
-void fftDestroy()
+static void fftDestroy()
 {
   MKL_LONG error;
 
@@ -808,7 +804,7 @@ void fftDestroy()
 }
 
 
-void FFT(FilteredDataType filteredData, unsigned iteration)
+static void FFT(FilteredDataType filteredData, unsigned iteration)
 {
 #pragma omp parallel
   {
@@ -824,7 +820,7 @@ void FFT(FilteredDataType filteredData, unsigned iteration)
 
 ////// transpose
 
-void transpose(
+static void transpose(
   CorrectedDataType correctedData,
   const FilteredDataType filteredData,
 #if defined BANDPASS_CORRECTION
@@ -1090,7 +1086,7 @@ void transpose(
 
 #if defined DELAY_COMPENSATION
 
-void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin, const DelaysType delaysAfterEnd, double subbandFrequency, unsigned iteration)
+static void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin, const DelaysType delaysAfterEnd, double subbandFrequency, unsigned iteration)
 {
 #pragma omp parallel
   {
@@ -1180,7 +1176,7 @@ void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin
 }
 
 
-void applyDelays(unsigned stream, double frequency, unsigned iteration)
+static void applyDelays(unsigned stream, double frequency, unsigned iteration)
 {
 #pragma omp target map(to:frequency, iteration)
   applyDelays(correctedData, delaysAtBegin[stream], delaysAfterEnd[stream], frequency, iteration);
@@ -1189,7 +1185,7 @@ void applyDelays(unsigned stream, double frequency, unsigned iteration)
 #endif
 
 
-void setBandPassTestPattern(BandPassCorrectionWeights bandPassCorrectionWeights)
+static void setBandPassTestPattern(BandPassCorrectionWeights bandPassCorrectionWeights)
 {
   for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
     bandPassCorrectionWeights[channel] = 1;
@@ -1199,7 +1195,7 @@ void setBandPassTestPattern(BandPassCorrectionWeights bandPassCorrectionWeights)
 }
 
 
-void setTransposeTestPattern(FilteredDataType filteredData)
+static void setTransposeTestPattern(FilteredDataType filteredData)
 {
   memset(filteredData, 0, sizeof filteredData);
 
@@ -1210,7 +1206,7 @@ void setTransposeTestPattern(FilteredDataType filteredData)
 }
 
 
-void setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
+static void setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
 {
   memset(delaysAtBegin, 0, sizeof(DelaysType));
   memset(delaysAfterEnd, 0, sizeof(DelaysType));
@@ -1220,7 +1216,7 @@ void setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
 }
 
 
-void checkTransposeTestPattern(const CorrectedDataType correctedData)
+static void checkTransposeTestPattern(const CorrectedDataType correctedData)
 {
   for (int channel = 0; channel < NR_CHANNELS; channel ++)
     for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
@@ -1230,7 +1226,7 @@ void checkTransposeTestPattern(const CorrectedDataType correctedData)
 }
 
 
-void testTranspose()
+static void testTranspose()
 {
   double runTime, power;
 
@@ -1261,14 +1257,14 @@ void testTranspose()
 
 //////
 
-template <typename T> inline void cmul(T &c_r, T &c_i, T a_r, T a_i, T b_r, T b_i)
+template <typename T> static inline void cmul(T &c_r, T &c_i, T a_r, T a_i, T b_r, T b_i)
 {
   c_r = a_r * b_r - a_i * b_i;
   c_i = a_r * b_i + a_i * b_r;
 }
 
 
-void fused_FIRfilterInit(
+static void fused_FIRfilterInit(
   const InputDataType inputData,
   float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
   unsigned input,
@@ -1290,7 +1286,7 @@ void fused_FIRfilterInit(
 }
 
 
-void fused_FIRfilter(
+static void fused_FIRfilter(
   const InputDataType inputData,
   float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
   float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
@@ -1323,7 +1319,7 @@ void fused_FIRfilter(
 }
 
 
-void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/, unsigned iteration, uint64_t &FFTtime)
+static void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/, unsigned iteration, uint64_t &FFTtime)
 {
   FFTtime -= rdtsc();
 
@@ -1336,7 +1332,7 @@ void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNEL
 }
 
 
-void fused_TransposeInit(
+static void fused_TransposeInit(
 #if defined DELAY_COMPENSATION
   float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
   float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
@@ -1382,7 +1378,7 @@ void fused_TransposeInit(
 }
 
 
-void fused_Transpose(
+static void fused_Transpose(
   CorrectedDataType correctedData,
   float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
 #if defined DELAY_COMPENSATION
@@ -1434,7 +1430,7 @@ void fused_Transpose(
 }
 
 
-void fused(
+static void fused(
   CorrectedDataType correctedData,
   const InputDataType inputData,
   const FilterWeightsType filterWeights,
@@ -1493,7 +1489,7 @@ void fused(
 }
 
 
-void setFusedTestPattern(InputDataType inputData, FilterWeightsType filterWeights, BandPassCorrectionWeights bandPassCorrectionWeights, DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
+static void setFusedTestPattern(InputDataType inputData, FilterWeightsType filterWeights, BandPassCorrectionWeights bandPassCorrectionWeights, DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
 {
   memset(inputData, 0, sizeof(InputDataType));
   memset(filterWeights, 0, sizeof(FilterWeightsType));
@@ -1514,7 +1510,7 @@ void setFusedTestPattern(InputDataType inputData, FilterWeightsType filterWeight
 }
 
 
-void checkFusedTestPattern(const CorrectedDataType correctedData)
+static void checkFusedTestPattern(const CorrectedDataType correctedData)
 {
   typedef float CorrectedDataType[NR_CHANNELS][ALIGN(NR_INPUTS, VECTOR_SIZE) / VECTOR_SIZE][NR_SAMPLES_PER_CHANNEL][COMPLEX][VECTOR_SIZE] __attribute__((aligned(64)));
   for (unsigned input = 0; input < NR_INPUTS; input ++)
@@ -1525,7 +1521,7 @@ void checkFusedTestPattern(const CorrectedDataType correctedData)
 }
 
 
-void testFused()
+static void testFused()
 {
   setFusedTestPattern(inputData[0], filterWeights, bandPassCorrectionWeights, delaysAtBegin[0], delaysAfterEnd[0]);
   uint64_t FIRfilterTime, FFTtime, trsTime;
@@ -1553,7 +1549,7 @@ void testFused()
 
 #if defined __MIC__ || defined __AVX512F__
 
-inline void correlate_column(__m512 &sum_real, __m512 &sum_imag, const float *sample_X_real_ptr, const float *sample_X_imag_ptr, __m512 samples_Y_real, __m512 samples_Y_imag)
+static inline void correlate_column(__m512 &sum_real, __m512 &sum_imag, const float *sample_X_real_ptr, const float *sample_X_imag_ptr, __m512 samples_Y_real, __m512 samples_Y_imag)
 {
 #if defined __MIC__
   __m512 sample_X_real = _mm512_extload_ps(sample_X_real_ptr, _MM_UPCONV_PS_NONE, _MM_BROADCAST_1X16, _MM_HINT_NONE);
@@ -1574,7 +1570,7 @@ inline void correlate_column(__m512 &sum_real, __m512 &sum_imag, const float *sa
 
 #if defined __AVX__ && !defined __MIC__
 
-inline void correlate_column(__m256 &sum_real, __m256 &sum_imag, const float *sample_X_real_ptr, const float *sample_X_imag_ptr, __m256 samples_Y_real, __m256 samples_Y_imag)
+static inline void correlate_column(__m256 &sum_real, __m256 &sum_imag, const float *sample_X_real_ptr, const float *sample_X_imag_ptr, __m256 samples_Y_real, __m256 samples_Y_imag)
 {
   __m256 sample_X_real = _mm256_broadcast_ss(sample_X_real_ptr);
   __m256 sample_X_imag = _mm256_broadcast_ss(sample_X_imag_ptr);
@@ -1597,7 +1593,7 @@ inline void correlate_column(__m256 &sum_real, __m256 &sum_imag, const float *sa
 
 #if defined __MIC__ || defined __AVX512F__
 
-inline void store_unaligned(float *ptr, __m512 value)
+static inline void store_unaligned(float *ptr, __m512 value)
 {
 #if defined __MIC__
   _mm512_packstorelo_ps(ptr     , value);
@@ -1608,7 +1604,7 @@ inline void store_unaligned(float *ptr, __m512 value)
 }
 
 
-inline void store_unaligned(float *ptr, __mmask16 mask, __m512 value)
+static inline void store_unaligned(float *ptr, __mmask16 mask, __m512 value)
 {
 #if defined __MIC__
   _mm512_mask_packstorelo_ps(ptr     , mask, value);
@@ -1619,7 +1615,7 @@ inline void store_unaligned(float *ptr, __mmask16 mask, __m512 value)
 }
 
 
-inline void write_visibilities(VisibilitiesType visibilities, int channel, int blockX, int blockY, int offset, __m512 sum_real, __m512 sum_imag)
+static inline void write_visibilities(VisibilitiesType visibilities, int channel, int blockX, int blockY, int offset, __m512 sum_real, __m512 sum_imag)
 {
 #if NR_INPUTS % VECTOR_SIZE != 0
   if (VECTOR_SIZE * blockX + offset < NR_INPUTS)
@@ -1643,7 +1639,7 @@ inline void write_visibilities(VisibilitiesType visibilities, int channel, int b
 
 #if defined __AVX__ && !defined __MIC__
 
-inline void write_visibilities(VisibilitiesType visibilities, int channel, int blockX, int blockY, int offset, __m256 sum_real, __m256 sum_imag)
+static inline void write_visibilities(VisibilitiesType visibilities, int channel, int blockX, int blockY, int offset, __m256 sum_real, __m256 sum_imag)
 {
 #if NR_INPUTS % VECTOR_SIZE != 0
   if (VECTOR_SIZE * blockX + offset < NR_INPUTS)
@@ -1679,7 +1675,7 @@ inline void write_visibilities(VisibilitiesType visibilities, int channel, int b
 #endif
 
 
-void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedData, unsigned iteration)
+static void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedData, unsigned iteration)
 {
 #pragma omp parallel
   {
@@ -1997,7 +1993,7 @@ void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedD
 }
 
 
-void copyVisibilities(int stream)
+static void copyVisibilities(int stream)
 {
   double start_time = omp_get_wtime();
 #pragma omp target update from(visibilities[stream])
@@ -2008,7 +2004,7 @@ void copyVisibilities(int stream)
 }
 
 
-void setCorrelatorTestPattern(CorrectedDataType correctedData)
+static void setCorrelatorTestPattern(CorrectedDataType correctedData)
 {
   memset(correctedData, 0, sizeof correctedData);
 
@@ -2021,7 +2017,7 @@ void setCorrelatorTestPattern(CorrectedDataType correctedData)
 }
 
 
-void checkCorrelatorTestPattern(const VisibilitiesType visibilities)
+static void checkCorrelatorTestPattern(const VisibilitiesType visibilities)
 {
   for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
     for (unsigned baseline = 0; baseline < NR_BASELINES; baseline ++)
@@ -2030,7 +2026,7 @@ void checkCorrelatorTestPattern(const VisibilitiesType visibilities)
 }
 
 
-void testCorrelator()
+static void testCorrelator()
 {
   setCorrelatorTestPattern(correctedData);
 
@@ -2043,7 +2039,7 @@ void testCorrelator()
 }
 
 
-void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, const PowerSensor::State &startState, const PowerSensor::State &stopState, double weight = 1)
+static void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, const PowerSensor::State &startState, const PowerSensor::State &stopState, double weight = 1)
 {
 #if !defined CORRECTNESS_TEST
   powerSensor.mark(startState, msg);
@@ -2108,7 +2104,7 @@ void pipeline(
 #endif
 
 
-void pipeline(unsigned stream, double subbandFrequency, unsigned iteration)
+static void pipeline(unsigned stream, double subbandFrequency, unsigned iteration)
 {
   PowerSensor::State powerStates[8];
   uint64_t FIRfilterTime, FFTtime, trsTime;
