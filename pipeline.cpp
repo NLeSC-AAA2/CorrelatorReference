@@ -20,18 +20,14 @@
 
 #define SUBBAND_BANDWIDTH		195312.5
 
-#if defined __AVX512F__ || defined __MIC__ || defined __INTEL_OFFLOAD
+#if defined __AVX512F__ || defined __MIC__
 #undef USE_FUSED_FILTER
 #else
 #endif
 
-#if defined __INTEL_OFFLOAD
-#define NR_STREAMS			2
-#else
 #define NR_STREAMS			1
-#endif
 
-#if defined __AVX512F__ || defined __MIC__ || defined __INTEL_OFFLOAD
+#if defined __AVX512F__ || defined __MIC__
 #define VECTOR_SIZE			16
 #else
 #define VECTOR_SIZE			8
@@ -98,9 +94,7 @@ static inline uint64_t rdtsc()
 }
 
 
-#if defined MEASURE_POWER && defined __INTEL_OFFLOAD && !defined __MIC__
-#include "../../PowerSensor/libPowerSensor.h"
-#elif defined MEASURE_POWER && !defined __INTEL_OFFLOAD
+#if defined MEASURE_POWER
 #include "../../LikwidPowerSensor/libPowerSensor.h"
 #else
 
@@ -111,9 +105,9 @@ class PowerSensor
 
     State read() { return omp_get_wtime(); }
     void mark(const State &, const char *) { }
-    static double Joules(const State &firstState, const State &secondState) { return 0; }
+    static double Joules(const State &, const State &) { return 0; }
     static double seconds(const State &firstState, const State &secondState) { return secondState - firstState; }
-    static double Watt(const State &firstState, const State &secondState) { return 0; }
+    static double Watt(const State &, const State &) { return 0; }
 };
 
 #endif
@@ -129,7 +123,9 @@ typedef float VisibilitiesType[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
 
 static InputDataType inputData[NR_STREAMS];
+#if defined CORRECTNESS_TEST
 static FilteredDataType filteredData;
+#endif
 static FilterWeightsType filterWeights;
 static BandPassCorrectionWeights bandPassCorrectionWeights;
 static DelaysType delaysAtBegin[NR_STREAMS], delaysAfterEnd[NR_STREAMS];
@@ -137,11 +133,7 @@ static CorrectedDataType correctedData;
 static VisibilitiesType visibilities[NR_STREAMS + 1]; // this is really too much, but avoids a potential segfault on as (masked!!!) vpackstorehps
 static uint64_t totalNrOperations;
 
-#if defined MEASURE_POWER && defined __INTEL_OFFLOAD && !defined __MIC__
-static PowerSensor powerSensor("/dev/ttyUSB0", "/tmp/sensor_readings");
-#else
 static PowerSensor powerSensor;
-#endif
 
 
 #if defined __AVX__ && !defined __MIC__
@@ -161,7 +153,36 @@ std::ostream &operator << (std::ostream &str, __m256 v)
 
 ////// FIR filter
 
-static void filter(FilteredDataType filteredData, const InputDataType inputData, const FilterWeightsType filterWeights, unsigned iteration)
+#if defined CORRECTNESS_TEST
+static void setInputTestPattern(InputDataType inputData)
+{
+  signed char count = 64;
+
+  for (unsigned input = 0; input < NR_INPUTS; input ++)
+    for (unsigned ri = 0; ri < COMPLEX; ri ++)
+      for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1; time ++)
+	for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
+	  inputData[input][ri][time][channel] = count ++;
+
+  if (NR_INPUTS > 9 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 12) {
+    inputData[9][REAL][98 + NR_TAPS - 1][12] = 4;
+    inputData[9][REAL][99 + NR_TAPS - 1][12] = 5;
+  }
+}
+
+
+static void setFilterWeightsTestPattern(FilterWeightsType filterWeights)
+{
+  memset(filterWeights, 0, sizeof(FilterWeightsType));
+
+  if (NR_TAPS > 4 && NR_CHANNELS > 12) {
+    filterWeights[15][12] = 2;
+    filterWeights[14][12] = 3;
+  }
+}
+
+
+static void filter(FilteredDataType filteredData, const InputDataType inputData, const FilterWeightsType filterWeights, unsigned)
 {
 #pragma omp parallel
   {
@@ -673,34 +694,6 @@ static void FIR_filter(int stream, unsigned iteration)
 }
 
 
-static void setInputTestPattern(InputDataType inputData)
-{
-  signed char count = 64;
-
-  for (unsigned input = 0; input < NR_INPUTS; input ++)
-    for (unsigned ri = 0; ri < COMPLEX; ri ++)
-      for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1; time ++)
-	for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-	  inputData[input][ri][time][channel] = count ++;
-
-  if (NR_INPUTS > 9 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 12) {
-    inputData[9][REAL][98 + NR_TAPS - 1][12] = 4;
-    inputData[9][REAL][99 + NR_TAPS - 1][12] = 5;
-  }
-}
-
-
-static void setFilterWeightsTestPattern(FilterWeightsType filterWeights)
-{
-  memset(filterWeights, 0, sizeof(FilterWeightsType));
-
-  if (NR_TAPS > 4 && NR_CHANNELS > 12) {
-    filterWeights[15][12] = 2;
-    filterWeights[14][12] = 3;
-  }
-}
-
-
 static void checkFIR_FilterTestPattern(const FilteredDataType filteredData)
 {
   for (unsigned input = 0; input < NR_INPUTS; input ++)
@@ -730,6 +723,7 @@ static void testFIR_Filter()
 #pragma omp target update from(filteredData)
   checkFIR_FilterTestPattern(filteredData);
 }
+#endif
 
 
 ////// FFT
@@ -799,7 +793,7 @@ static void fftDestroy()
 
 
 #if !defined USE_FUSED_FILTER
-static void FFT(FilteredDataType filteredData, unsigned iteration)
+static void FFT(FilteredDataType filteredData, unsigned)
 {
 #pragma omp parallel
   {
@@ -816,13 +810,14 @@ static void FFT(FilteredDataType filteredData, unsigned iteration)
 
 ////// transpose
 
+#if defined CORRECTNESS_TEST
 static void transpose(
   CorrectedDataType correctedData,
   const FilteredDataType filteredData,
 #if defined BANDPASS_CORRECTION
   const BandPassCorrectionWeights bandPassCorrectionWeights,
 #endif
-  unsigned iteration
+  unsigned
 )
 {
 #pragma omp parallel
@@ -1078,10 +1073,13 @@ static void transpose(
 #endif
   }
 }
+#endif
 
 
 #if defined DELAY_COMPENSATION
-static void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin, const DelaysType delaysAfterEnd, double subbandFrequency, unsigned iteration)
+
+#if defined CORRECTNESS_TEST
+static void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin, const DelaysType delaysAfterEnd, double subbandFrequency, unsigned)
 {
 #pragma omp parallel
   {
@@ -1170,6 +1168,7 @@ static void applyDelays(CorrectedDataType correctedData, const DelaysType delays
   }
 }
 #endif
+#endif
 
 
 #if defined BANDPASS_CORRECTION
@@ -1184,17 +1183,6 @@ static void setBandPassTestPattern(BandPassCorrectionWeights bandPassCorrectionW
 #endif
 
 
-static void setTransposeTestPattern(FilteredDataType filteredData)
-{
-  memset(filteredData, 0, sizeof filteredData);
-
-  if (NR_INPUTS > 22 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 5) {
-    filteredData[22][99][REAL][5] = 2;
-    filteredData[22][99][IMAG][5] = 3;
-  }
-}
-
-
 #if defined DELAY_COMPENSATION
 static void setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
 {
@@ -1205,6 +1193,18 @@ static void setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfte
     delaysAfterEnd[22] = 1e-6;
 }
 #endif
+
+
+#if defined CORRECTNESS_TEST
+static void setTransposeTestPattern(FilteredDataType filteredData)
+{
+  memset(filteredData, 0, sizeof filteredData);
+
+  if (NR_INPUTS > 22 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 5) {
+    filteredData[22][99][REAL][5] = 2;
+    filteredData[22][99][IMAG][5] = 3;
+  }
+}
 
 
 static void checkTransposeTestPattern(const CorrectedDataType correctedData)
@@ -1242,6 +1242,7 @@ static void testTranspose()
 #pragma omp target update from(correctedData)
   checkTransposeTestPattern(correctedData);
 }
+#endif
 
 
 //////
@@ -1257,7 +1258,7 @@ static void fused_FIRfilterInit(
   const InputDataType inputData,
   float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
   unsigned input,
-  unsigned iteration,
+  unsigned,
   uint64_t &FIRfilterTime
 )
 {
@@ -1281,7 +1282,7 @@ static void fused_FIRfilter(
   float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
   unsigned input,
   unsigned majorTime,
-  unsigned iteration,
+  unsigned,
   uint64_t &FIRfilterTime
 )
 {
@@ -1308,7 +1309,7 @@ static void fused_FIRfilter(
 }
 
 
-static void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/, unsigned iteration, uint64_t &FFTtime)
+static void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/, unsigned, uint64_t &FFTtime)
 {
   FFTtime -= rdtsc();
 
@@ -1335,7 +1336,7 @@ static void fused_TransposeInit(
   double subbandFrequency,
 #endif
   unsigned input,
-  unsigned iteration,
+  unsigned,
   uint64_t &trsTime
 )
 {
@@ -1376,7 +1377,7 @@ static void fused_Transpose(
 #endif
   unsigned input,
   unsigned majorTime,
-  unsigned iteration,
+  unsigned,
   uint64_t &trsTime
 )
 {
@@ -1422,7 +1423,7 @@ static void fused_Transpose(
 static void fused(
   CorrectedDataType correctedData,
   const InputDataType inputData,
-  const FilterWeightsType filterWeights,
+  const FilterWeightsType,
 #if defined BANDPASS_CORRECTION
   const BandPassCorrectionWeights bandPassCorrectionWeights,
 #endif
@@ -1478,6 +1479,7 @@ static void fused(
 }
 
 
+#if defined CORRECTNESS_TEST
 static void setFusedTestPattern(InputDataType inputData, FilterWeightsType filterWeights, BandPassCorrectionWeights bandPassCorrectionWeights, DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
 {
   memset(inputData, 0, sizeof(InputDataType));
@@ -1530,6 +1532,7 @@ static void testFused()
 
   checkFusedTestPattern(correctedData);
 }
+#endif
 
 
 
@@ -1663,7 +1666,7 @@ static inline void write_visibilities(VisibilitiesType visibilities, int channel
 #endif
 
 
-static void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedData, unsigned iteration)
+static void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedData, unsigned)
 {
 #pragma omp parallel
   {
@@ -1981,19 +1984,7 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 }
 
 
-#if defined __INTEL_OFFLOAD
-static void copyVisibilities(int stream)
-{
-  double start_time = omp_get_wtime();
-#pragma omp target update from(visibilities[stream])
-  double copy_time = omp_get_wtime() - start_time;
-
-#pragma omp critical (cout)
-  cout << "output data: time = " << copy_time << "s (total), " << "BW = " << sizeof(VisibilitiesType) / copy_time / 1e9 << " GB/s" << std::endl;
-}
-#endif
-
-
+#if defined CORRECTNESS_TEST
 static void setCorrelatorTestPattern(CorrectedDataType correctedData)
 {
   memset(correctedData, 0, sizeof correctedData);
@@ -2027,15 +2018,25 @@ static void testCorrelator()
 
   checkCorrelatorTestPattern(visibilities[0]);
 }
+#endif
 
 
 static void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, const PowerSensor::State &startState, const PowerSensor::State &stopState, double weight = 1)
 {
-#if !defined CORRECTNESS_TEST
+#if defined CORRECTNESS_TEST
+    (void) msg;
+    (void) nrOperations;
+    (void) nrBytes;
+    (void) startState;
+    (void) stopState;
+    (void) weight;
+#else
   powerSensor.mark(startState, msg);
 
   double runTime = PowerSensor::seconds(startState, stopState) * weight;
+#if defined MEASURE_POWER
   double energy  = PowerSensor::Joules(startState, stopState) * weight;
+#endif
 
   cout << msg << ": " << runTime << " s, "
 	    << nrOperations * 1e-12 / runTime << " TFLOPS, "
@@ -2103,10 +2104,6 @@ static void pipeline(unsigned stream, double subbandFrequency, unsigned iteratio
 
   //powerStates[0] = powerSensor.read();
 
-#if defined __INTEL_OFFLOAD
-  copyInputData(stream);
-#endif
-
 #pragma omp critical (XeonPhi)
   {
     powerStates[1] = powerSensor.read();
@@ -2162,10 +2159,6 @@ static void pipeline(unsigned stream, double subbandFrequency, unsigned iteratio
     powerStates[6] = powerSensor.read();
   }
 
-#if defined __INTEL_OFFLOAD
-  copyVisibilities(stream);
-#endif
-
   if (iteration > 0) // do not count first iteration
 #pragma omp critical (cout)
   {
@@ -2210,7 +2203,7 @@ static void pipeline(unsigned stream, double subbandFrequency, unsigned iteratio
 }
 
 
-int main(int argc, char **argv)
+int main(int, char **)
 {
   assert(NR_CHANNELS % 16 == 0);
   assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);

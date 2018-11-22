@@ -13,10 +13,10 @@ else
     PRINTF := @printf
 endif
 
-WARNINGS := -Wall -Wno-unknown-pragmas -std=c++17
+WARNINGS := -Wall -Wextra -Wno-unknown-pragmas -std=c++17
 
 ifeq ($(CXX), clang++)
-    WARNINGS+=-Wno-sizeof-array-argument -Wno-sizeof-pointer-memaccess
+    WARNINGS+=-Wno-sizeof-array-argument -Wno-sizeof-pointer-memaccess -Wno-unused-parameter
     CFLAGS+=-isystem/cm/shared/apps/intel/composer_xe/2015.5.223/mkl/include/ \
             -stdlib=libc++
     LDFLAGS+=-stdlib=libc++
