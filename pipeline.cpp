@@ -702,7 +702,7 @@ void setInputTestPattern(InputDataType inputData)
 
 void setFilterWeightsTestPattern(FilterWeightsType filterWeights)
 {
-  memset(filterWeights, 0, sizeof filterWeights);
+  memset(filterWeights, 0, sizeof(FilterWeightsType));
 
   if (NR_TAPS > 4 && NR_CHANNELS > 12) {
     filterWeights[15][12] = 2;
