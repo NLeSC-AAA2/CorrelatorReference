@@ -6,26 +6,24 @@
 #define _mm512_storenrngo_ps _mm512_stream_ps
 #endif
 
-#if !defined NR_INPUTS
 #define NR_INPUTS			(2*576)
-#endif
-
-#if !defined NR_CHANNELS
 #define NR_CHANNELS			64
-#endif
-
-#if !defined NR_SAMPLES_PER_CHANNEL
 #define NR_SAMPLES_PER_CHANNEL		3072
-#endif
 
-#define SUBBAND_BANDWIDTH		195312.5f
+#if defined DELAY_COMPENSATION
+constexpr float SUBBAND_BANDWIDTH = 195312.5f;
+#endif
+constexpr int NR_STREAMS = 1;
+constexpr int NR_TAPS = 16;
+constexpr int NR_BASELINES = NR_INPUTS * (NR_INPUTS + 1) / 2;
+constexpr int REAL = 0;
+constexpr int IMAG = 1;
+constexpr int COMPLEX = 2;
 
 #if defined __AVX512F__ || defined __MIC__
 #undef USE_FUSED_FILTER
 #else
 #endif
-
-#define NR_STREAMS			1
 
 #if defined __AVX512F__ || defined __MIC__
 #define VECTOR_SIZE			16
@@ -33,18 +31,11 @@
 #define VECTOR_SIZE			8
 #endif
 
-#define NR_TAPS				16
-#define NR_BASELINES			(NR_INPUTS * (NR_INPUTS + 1) / 2)
-
 #if defined __AVX512F__ && !defined USE_FUSED_FILTER
 #define NR_SAMPLES_PER_MINOR_LOOP	NR_SAMPLES_PER_CHANNEL
 #else
 #define NR_SAMPLES_PER_MINOR_LOOP	64
 #endif
-
-#define REAL				0
-#define IMAG				1
-#define COMPLEX				2
 
 #define ALIGN(N,A) (((N)+(A)-1)/(A)*(A))
 #define NR_SAMPLES			((uint64_t) NR_INPUTS * NR_SAMPLES_PER_CHANNEL * NR_CHANNELS)
