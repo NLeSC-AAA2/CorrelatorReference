@@ -1267,8 +1267,6 @@ static void fused_FIRfilterInit(
 
   for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++)
     for (unsigned time = 0; time < NR_TAPS - 1; time ++)
-#pragma simd
-#pragma vector aligned
       for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
 	history[real_imag][time][channel] = inputData[input][real_imag][time][channel];
 
@@ -1290,7 +1288,6 @@ static void fused_FIRfilter(
 
   for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
     for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
-#pragma simd
 //#pragma vector aligned // why does specifying this yields wrong results ???
       for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
 	history[real_imag][(minorTime - 1) % NR_TAPS][channel] = inputData[input][real_imag][majorTime + minorTime + NR_TAPS - 1][channel];
@@ -1348,8 +1345,6 @@ static void fused_TransposeInit(
   double phiEnd   = -2.0 * 3.141592653589793 * delaysAfterEnd[input];
   double deltaPhi = (phiEnd - phiBegin) / NR_SAMPLES_PER_CHANNEL;
 
-#pragma simd
-#pragma vector aligned
   for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
     double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * (SUBBAND_BANDWIDTH / NR_CHANNELS);
     float myPhiBegin = static_cast<float>((phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */);
@@ -1399,8 +1394,6 @@ static void fused_Transpose(
 
   // Delay compensation & transpose
 
-#pragma simd
-#pragma vector aligned
   for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
     for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
       float sample_r = filteredData[minorTime][REAL][channel];
@@ -1926,7 +1919,6 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 	__m256 sum_G_real = _mm256_setzero_ps(), sum_G_imag = _mm256_setzero_ps();
 	__m256 sum_H_real = _mm256_setzero_ps(), sum_H_imag = _mm256_setzero_ps();
 
-#pragma noprefetch
 	for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
 	  __m256 samples_Y_real = _mm256_load_ps(&correctedData[channel][blockY][time][REAL][0]);
 	  __m256 samples_Y_imag = _mm256_load_ps(&correctedData[channel][blockY][time][IMAG][0]);
