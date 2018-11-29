@@ -80,10 +80,6 @@ static inline double rdtsc()
 }
 
 
-#if defined MEASURE_POWER
-#include "../../LikwidPowerSensor/libPowerSensor.h"
-#else
-
 class PowerSensor
 {
   public:
@@ -95,8 +91,6 @@ class PowerSensor
     static double seconds(const State &firstState, const State &secondState) { return secondState - firstState; }
     static double Watt(const State &, const State &) { return 0; }
 };
-
-#endif
 
 
 typedef int8_t InputDataType[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS] __attribute__((aligned(16)));
@@ -1975,17 +1969,10 @@ static void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, con
   powerSensor.mark(startState, msg);
 
   double runTime = PowerSensor::seconds(startState, stopState) * weight;
-#if defined MEASURE_POWER
-  double energy  = PowerSensor::Joules(startState, stopState) * weight;
-#endif
 
   cout << msg << ": " << runTime << " s, "
 	    << nrOperations * 1e-12 / runTime << " TFLOPS, "
 	    << nrBytes * 1e-9 / runTime << " GB/s"
-#if defined MEASURE_POWER
-	    ", " << energy / runTime << " W"
-	    ", " << nrOperations * 1e-9 / energy << " GFLOPS/W"
-#endif
 	    << std::endl;
 #endif
 }
@@ -2203,10 +2190,6 @@ int main(int, char **)
 
   cout << "total: " << PowerSensor::seconds(startState, stopState) << " s"
 	       ", " << totalNrOperations / PowerSensor::seconds(startState, stopState) * 1e-12 << " TFLOPS"
-#if defined MEASURE_POWER
-	       ", " << PowerSensor::Watt(startState, stopState) << " W"
-	       ", " << totalNrOperations / PowerSensor::Joules(startState, stopState) * 1e-9 << " GFLOPS/W"
-#endif
 	       << std::endl;
 #endif
 
