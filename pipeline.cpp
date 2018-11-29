@@ -1,15 +1,33 @@
 // (C) 2013,2014,2015 John Romein/ASTRON
 // Copyright 2018-2019 Netherlands eScience Center and ASTRON
 // Licensed under the Apache License, version 2.0. See LICENSE for details.
+#include <complex>
+#include <iostream>
+#include <stdexcept>
+
+#include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdint>
+#include <cstring>
+
+#include <fcntl.h>
+#include <immintrin.h>
+#include <mkl.h>
+#include <omp.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #if defined __AVX512F__
 #define _mm512_storenrngo_ps _mm512_stream_ps
 #endif
 
 #define NR_INPUTS			(2*576)
-#define NR_CHANNELS			64
-#define NR_SAMPLES_PER_CHANNEL		3072
 
+constexpr int NR_CHANNELS = 64;
+constexpr int NR_SAMPLES_PER_CHANNEL = 3072;
+constexpr uint64_t NR_SAMPLES = NR_INPUTS * NR_SAMPLES_PER_CHANNEL * NR_CHANNELS;
 #if defined DELAY_COMPENSATION
 constexpr float SUBBAND_BANDWIDTH = 195312.5f;
 #endif
@@ -20,12 +38,12 @@ constexpr int REAL = 0;
 constexpr int IMAG = 1;
 constexpr int COMPLEX = 2;
 
-#if defined __AVX512F__ || defined __MIC__
+#if defined __AVX512F__
 #undef USE_FUSED_FILTER
 #else
 #endif
 
-#if defined __AVX512F__ || defined __MIC__
+#if defined __AVX512F__
 #define VECTOR_SIZE			16
 #else
 #define VECTOR_SIZE			8
@@ -38,34 +56,11 @@ constexpr int COMPLEX = 2;
 #endif
 
 #define ALIGN(N,A) (((N)+(A)-1)/(A)*(A))
-#define NR_SAMPLES			((uint64_t) NR_INPUTS * NR_SAMPLES_PER_CHANNEL * NR_CHANNELS)
-
-#include <cassert>
-#include <cstdio>
-#include <cstring>
-#include <complex>
-#include <cmath>
-#include <iostream>
-#include <stdexcept>
-
-#include <fcntl.h>
-#include <immintrin.h>
-#include <mkl.h>
-#include <omp.h>
-#include <stdint.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 #if defined __AVX512F__
 static inline __m512 load_8_bit_samples(const signed char *ptr)
 {
   return _mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(* (const __m128i *) ptr));
-}
-#elif defined __MIC__
-static inline __m512 load_8_bit_samples(const signed char *ptr)
-{
-  return _mm512_extload_ps(ptr, _MM_UPCONV_PS_SINT8, _MM_BROADCAST32_NONE, _MM_HINT_NONE);
 }
 #endif
 
@@ -127,7 +122,7 @@ static uint64_t totalNrOperations;
 static PowerSensor powerSensor;
 
 
-#if defined __AVX__ && !defined __MIC__
+#if defined __AVX__
 
 std::ostream &operator << (std::ostream &str, __m256 v)
 {
@@ -177,7 +172,7 @@ static void filter(FilteredDataType filteredData, const InputDataType inputData,
 {
 #pragma omp parallel
   {
-#if defined __AVX512F__ || defined __MIC__
+#if defined __AVX512F__
 #pragma noprefetch
 #pragma omp for collapse(3) schedule(dynamic)
     for (int input = 0; input < NR_INPUTS; input ++) {
@@ -237,14 +232,6 @@ static void filter(FilteredDataType filteredData, const InputDataType inputData,
 	  float *__restrict outputPtr = &filteredData[input][0][real_imag][channelBase];
 
 	  for (int time = time_split; time < time_split + 256; time += 16) {
-#if defined __MIC__
-	    for (int t = 0; t < NR_TAPS; t ++) {
-	      _mm_prefetch((const char *) inputPtr + NR_CHANNELS * (time + t + 16), _MM_HINT_T2);
-	      _mm_prefetch((const char *) inputPtr + NR_CHANNELS * (time + t + 0), _MM_HINT_T0);
-	    }
-#endif
-
-	    //samples_0 = load_8_bit_samples(&inputData[input][real_imag][time + (NR_TAPS - 1) +  0][channelBase]);
 	    samples_0 = load_8_bit_samples(inputPtr + (time +  0) * NR_CHANNELS);
 	    sum = _mm512_mul_ps  (samples_1, weight_0);
 	    sum = _mm512_fmadd_ps(samples_2, weight_1, sum);
@@ -813,7 +800,7 @@ static void transpose(
 {
 #pragma omp parallel
   {
-#if defined __AVX512F__ || defined __MIC__
+#if defined __AVX512F__
 #if 0
     int	  stride  = NR_SAMPLES_PER_CHANNEL * NR_CHANNELS;
     __m512i indices = _mm512_set_epi32(15 * stride, 14 * stride, 13 * stride, 12 * stride, 11 * stride, 10 * stride, 9 * stride, 8 * stride, 7 * stride, 6 * stride, 5 * stride, 4 * stride, 3 * stride, 2 * stride, 1 * stride, 0 * stride);
@@ -1097,7 +1084,7 @@ static void applyDelays(CorrectedDataType correctedData, const DelaysType delays
 	  }
 	}
 
-#if defined __AVX512F__ || defined __MIC__
+#if defined __AVX512F__
 	__m512 v_r = _mm512_load_ps(v_rf);
 	__m512 v_i = _mm512_load_ps(v_if);
 	__m512 dv_r = _mm512_load_ps(dv_rf);
@@ -1522,14 +1509,11 @@ static void testFused()
 
 ////// correlator
 
-#if defined __MIC__ || defined __AVX512F__
+#if defined __AVX512F__
 
 static inline void correlate_column(__m512 &sum_real, __m512 &sum_imag, const float *sample_X_real_ptr, const float *sample_X_imag_ptr, __m512 samples_Y_real, __m512 samples_Y_imag)
 {
-#if defined __MIC__
-  __m512 sample_X_real = _mm512_extload_ps(sample_X_real_ptr, _MM_UPCONV_PS_NONE, _MM_BROADCAST_1X16, _MM_HINT_NONE);
-  __m512 sample_X_imag = _mm512_extload_ps(sample_X_imag_ptr, _MM_UPCONV_PS_NONE, _MM_BROADCAST_1X16, _MM_HINT_NONE);
-#elif defined __AVX512F__
+#if defined __AVX512F__
   __m512 sample_X_real = _mm512_set1_ps(*sample_X_real_ptr);
   __m512 sample_X_imag = _mm512_set1_ps(*sample_X_imag_ptr);
 #endif
@@ -1543,7 +1527,7 @@ static inline void correlate_column(__m512 &sum_real, __m512 &sum_imag, const fl
 #endif
 
 
-#if defined __AVX__ && !defined __MIC__
+#if defined __AVX__
 
 static inline void correlate_column(__m256 &sum_real, __m256 &sum_imag, const float *sample_X_real_ptr, const float *sample_X_imag_ptr, __m256 samples_Y_real, __m256 samples_Y_imag)
 {
@@ -1566,14 +1550,11 @@ static inline void correlate_column(__m256 &sum_real, __m256 &sum_imag, const fl
 #endif
 
 
-#if defined __MIC__ || defined __AVX512F__
+#if defined __AVX512F__
 
 static inline void store_unaligned(float *ptr, __m512 value)
 {
-#if defined __MIC__
-  _mm512_packstorelo_ps(ptr     , value);
-  _mm512_packstorehi_ps(ptr + 16, value);
-#elif defined __AVX512F__
+#if defined __AVX512F__
   _mm512_storeu_ps(ptr, value);
 #endif
 }
@@ -1581,10 +1562,7 @@ static inline void store_unaligned(float *ptr, __m512 value)
 
 static inline void store_unaligned(float *ptr, __mmask16 mask, __m512 value)
 {
-#if defined __MIC__
-  _mm512_mask_packstorelo_ps(ptr     , mask, value);
-  _mm512_mask_packstorehi_ps(ptr + 16, mask, value);
-#elif defined __AVX512F__
+#if defined __AVX512F__
   _mm512_mask_storeu_ps(ptr, mask, value);
 #endif
 }
@@ -1612,7 +1590,7 @@ static inline void write_visibilities(VisibilitiesType visibilities, int channel
 #endif
 
 
-#if defined __AVX__ && !defined __MIC__
+#if defined __AVX__
 
 static inline void write_visibilities(VisibilitiesType visibilities, int channel, int blockX, int blockY, int offset, __m256 sum_real, __m256 sum_imag)
 {
@@ -1791,7 +1769,7 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 	}
       }
     }
-#elif 1 && (defined __MIC__ || defined __AVX512F__)
+#elif 1 && defined __AVX512F__
       // correlate blocks of 16x16 inputs
 #define NR_16X16_BLOCKS ((ALIGN(NR_INPUTS, 16) / 16) * (ALIGN(NR_INPUTS, 16) / 16 + 1) / 2)
 
@@ -1801,15 +1779,6 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 	for (int block = 0; block < NR_16X16_BLOCKS; block ++) {
 	  int blockX = (sqrtf(8 * block + 1) - .99999f) / 2;
 	  int blockY = block - blockX * (blockX + 1) / 2;
-
-#if defined __MIC__
-	for (int time = 0; time < (NR_SAMPLES_PER_CHANNEL < 8 ? NR_SAMPLES_PER_CHANNEL : 8); time ++) {
-	  _mm_prefetch((const char *) &correctedData[channel][blockX][time][REAL][0], _MM_HINT_T0);
-	  _mm_prefetch((const char *) &correctedData[channel][blockX][time][IMAG][0], _MM_HINT_T0);
-	  _mm_prefetch((const char *) &correctedData[channel][blockY][time][REAL][0], _MM_HINT_T0);
-	  _mm_prefetch((const char *) &correctedData[channel][blockY][time][IMAG][0], _MM_HINT_T0);
-	}
-#endif
 
 	__m512 sum_A_real = _mm512_setzero_ps(), sum_A_imag = _mm512_setzero_ps();
 	__m512 sum_B_real = _mm512_setzero_ps(), sum_B_imag = _mm512_setzero_ps();
@@ -1832,17 +1801,6 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 	for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
 	  __m512 samples_Y_real = _mm512_load_ps((__m512 *) &correctedData[channel][blockY][time][REAL][0]);
 	  __m512 samples_Y_imag = _mm512_load_ps((__m512 *) &correctedData[channel][blockY][time][IMAG][0]);
-
-#if defined __MIC__
-	  _mm_prefetch((const char *) &correctedData[channel][blockX][time + 8][REAL][0], _MM_HINT_T1);
-	  _mm_prefetch((const char *) &correctedData[channel][blockY][time + 8][REAL][0], _MM_HINT_T1);
-	  _mm_prefetch((const char *) &correctedData[channel][blockX][time + 8][IMAG][0], _MM_HINT_T1);
-	  _mm_prefetch((const char *) &correctedData[channel][blockY][time + 8][IMAG][0], _MM_HINT_T1);
-	  _mm_prefetch((const char *) &correctedData[channel][blockX][time + 1][REAL][0], _MM_HINT_T0);
-	  _mm_prefetch((const char *) &correctedData[channel][blockY][time + 1][REAL][0], _MM_HINT_T0);
-	  _mm_prefetch((const char *) &correctedData[channel][blockX][time + 1][IMAG][0], _MM_HINT_T0);
-	  _mm_prefetch((const char *) &correctedData[channel][blockY][time + 1][IMAG][0], _MM_HINT_T0);
-#endif
 
 	  correlate_column(sum_A_real, sum_A_imag, &correctedData[channel][blockX][time][REAL][ 0], &correctedData[channel][blockX][time][IMAG][ 0], samples_Y_real, samples_Y_imag);
 	  correlate_column(sum_B_real, sum_B_imag, &correctedData[channel][blockX][time][REAL][ 1], &correctedData[channel][blockX][time][IMAG][ 1], samples_Y_real, samples_Y_imag);
@@ -1972,12 +1930,12 @@ static void setCorrelatorTestPattern(CorrectedDataType correctedData)
 {
   memset(correctedData, 0, sizeof correctedData);
 
-#if NR_CHANNELS > 5 && NR_SAMPLES_PER_CHANNEL > 99 && NR_INPUTS > 19
-  correctedData[5][ 0 / VECTOR_SIZE][99][REAL][ 0 % VECTOR_SIZE] = 3;
-  correctedData[5][ 0 / VECTOR_SIZE][99][IMAG][ 0 % VECTOR_SIZE] = 4;
-  correctedData[5][18 / VECTOR_SIZE][99][REAL][18 % VECTOR_SIZE] = 5;
-  correctedData[5][18 / VECTOR_SIZE][99][IMAG][18 % VECTOR_SIZE] = 6;
-#endif
+  if constexpr (NR_CHANNELS > 5 && NR_SAMPLES_PER_CHANNEL > 99 && NR_INPUTS > 19) {
+    correctedData[5][ 0 / VECTOR_SIZE][99][REAL][ 0 % VECTOR_SIZE] = 3;
+    correctedData[5][ 0 / VECTOR_SIZE][99][IMAG][ 0 % VECTOR_SIZE] = 4;
+    correctedData[5][18 / VECTOR_SIZE][99][REAL][18 % VECTOR_SIZE] = 5;
+    correctedData[5][18 / VECTOR_SIZE][99][IMAG][18 % VECTOR_SIZE] = 6;
+  }
 }
 
 
