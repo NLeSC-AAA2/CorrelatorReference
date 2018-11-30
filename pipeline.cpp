@@ -57,19 +57,6 @@ static inline double rdtsc()
 }
 
 
-class PowerSensor
-{
-  public:
-    typedef double State;
-
-    State read() { return omp_get_wtime(); }
-    void mark(const State &, const char *) { }
-    static double Joules(const State &, const State &) { return 0; }
-    static double seconds(const State &firstState, const State &secondState) { return secondState - firstState; }
-    static double Watt(const State &, const State &) { return 0; }
-};
-
-
 typedef int8_t InputDataType[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS] __attribute__((aligned(16)));
 typedef float FilteredDataType[ALIGN(NR_INPUTS, VECTOR_SIZE)][NR_SAMPLES_PER_CHANNEL][COMPLEX][NR_CHANNELS] __attribute__((aligned(64)));
 typedef float FilterWeightsType[NR_TAPS][NR_CHANNELS] __attribute__((aligned(64)));
@@ -89,8 +76,6 @@ static DelaysType delaysAtBegin[NR_STREAMS], delaysAfterEnd[NR_STREAMS];
 static CorrectedDataType correctedData;
 static VisibilitiesType visibilities[NR_STREAMS + 1]; // this is really too much, but avoids a potential segfault on as (masked!!!) vpackstorehps
 static uint64_t totalNrOperations;
-
-static PowerSensor powerSensor;
 
 
 #if defined __AVX__
@@ -1023,7 +1008,7 @@ static void testCorrelator()
 #endif
 
 
-static void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, const PowerSensor::State &startState, const PowerSensor::State &stopState, double weight = 1)
+static void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, const double &startState, const double &stopState, double weight = 1)
 {
 #if defined CORRECTNESS_TEST
     (void) msg;
@@ -1033,9 +1018,7 @@ static void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, con
     (void) stopState;
     (void) weight;
 #else
-  powerSensor.mark(startState, msg);
-
-  double runTime = PowerSensor::seconds(startState, stopState) * weight;
+  double runTime = (stopState - startState) * weight;
 
   cout << msg << ": " << runTime << " s, "
 	    << nrOperations * 1e-12 / runTime << " TFLOPS, "
@@ -1092,16 +1075,14 @@ void pipeline(
 
 static void pipeline(int stream, float subbandFrequency, unsigned iteration)
 {
-  PowerSensor::State powerStates[8];
+  double powerStates[8];
 #if defined USE_FUSED_FILTER
   double FIRfilterTime, FFTtime, trsTime;
 #endif
 
-  //powerStates[0] = powerSensor.read();
-
 #pragma omp critical (XeonPhi)
   {
-    powerStates[1] = powerSensor.read();
+    powerStates[1] = omp_get_wtime();
 
 #if 0
 #pragma omp target map(to:subbandFrequency)
@@ -1111,12 +1092,12 @@ static void pipeline(int stream, float subbandFrequency, unsigned iteration)
 #pragma omp target map(to:iteration)
     filter(filteredData, inputData[stream], filterWeights, iteration);
 
-    powerStates[2] = powerSensor.read();
+    powerStates[2] = omp_get_wtime();
 
 #pragma omp target
     FFT(filteredData, iteration);
 
-    powerStates[3] = powerSensor.read();
+    powerStates[3] = omp_get_wtime();
 
 #if defined BANDPASS_CORRECTION
 #pragma omp target map(to:iteration)
@@ -1126,7 +1107,7 @@ static void pipeline(int stream, float subbandFrequency, unsigned iteration)
     transpose(correctedData, filteredData, iteration);
 #endif
 
-    powerStates[4] = powerSensor.read();
+    powerStates[4] = omp_get_wtime();
 
 #if defined DELAY_COMPENSATION
 #pragma omp target map(to:subbandFrequency, iteration)
@@ -1145,13 +1126,13 @@ static void pipeline(int stream, float subbandFrequency, unsigned iteration)
     iteration, FIRfilterTime, FFTtime, trsTime);
 #endif
 
-    powerStates[5] = powerSensor.read();
+    powerStates[5] = omp_get_wtime();
 
 #pragma omp target map(to:iteration)
     correlate(visibilities[stream], correctedData, iteration);
 #endif
 
-    powerStates[6] = powerSensor.read();
+    powerStates[6] = omp_get_wtime();
   }
 
   if (iteration > 0) // do not count first iteration
@@ -1203,9 +1184,9 @@ int main(int, char **)
   assert(NR_CHANNELS % 16 == 0);
   assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);
 
-  PowerSensor::State startState;
+  double startState;
 #if !defined CORRECTNESS_TEST
-  PowerSensor::State stopState;
+  double stopState;
 #endif
 
 #pragma omp target
@@ -1237,12 +1218,12 @@ int main(int, char **)
 
     setFilterWeightsTestPattern(filterWeights);
 
-    for (unsigned i = 0; i < 100 && (i < 2 || PowerSensor::seconds(startState, powerSensor.read()) < 20); i ++) {
+    for (unsigned i = 0; i < 100 && (i < 2 || (omp_get_wtime() - startState) < 20); i ++) {
       if (i == 1)
       {
 #pragma omp barrier
 #pragma omp single
-	startState = powerSensor.read();
+	startState = omp_get_wtime();
       }
 
       pipeline(stream, 60e6, i);
@@ -1253,10 +1234,10 @@ int main(int, char **)
   }
 
 #if !defined CORRECTNESS_TEST
-  stopState = powerSensor.read();
+  stopState = omp_get_wtime();
 
-  cout << "total: " << PowerSensor::seconds(startState, stopState) << " s"
-	       ", " << totalNrOperations / PowerSensor::seconds(startState, stopState) * 1e-12 << " TFLOPS"
+  cout << "total: " << stopState - startState << " s"
+	       ", " << totalNrOperations / (stopState - startState) * 1e-12 << " TFLOPS"
 	       << std::endl;
 #endif
 
