@@ -20,7 +20,9 @@
 #include <unistd.h>
 
 
-#define NR_INPUTS			(2*576)
+constexpr int NR_INPUTS = 2 * 576;
+constexpr int VECTOR_SIZE = 8;
+constexpr bool VECTOR_DIVISIBLE = NR_INPUTS % VECTOR_SIZE == 0;
 
 constexpr int NR_CHANNELS = 64;
 constexpr int NR_SAMPLES_PER_CHANNEL = 3072;
@@ -31,15 +33,13 @@ constexpr float SUBBAND_BANDWIDTH = 195312.5f;
 constexpr int NR_STREAMS = 1;
 constexpr int NR_TAPS = 16;
 constexpr int NR_BASELINES = NR_INPUTS * (NR_INPUTS + 1) / 2;
+constexpr int NR_SAMPLES_PER_MINOR_LOOP = 64;
 constexpr int REAL = 0;
 constexpr int IMAG = 1;
 constexpr int COMPLEX = 2;
 
-
-#define VECTOR_SIZE			8
-#define NR_SAMPLES_PER_MINOR_LOOP	64
-
-#define ALIGN(N,A) (((N)+(A)-1)/(A)*(A))
+constexpr int ALIGN(int N, int A)
+{ return ((N+A-1)/A)*A; }
 
 std::ostream& cout = std::cout;
 
@@ -856,9 +856,7 @@ static inline void correlate_column(__m256 &sum_real, __m256 &sum_imag, const fl
 
 static inline void write_visibilities(VisibilitiesType visibilities, int channel, int blockX, int blockY, int offset, __m256 sum_real, __m256 sum_imag)
 {
-#if NR_INPUTS % VECTOR_SIZE != 0
-  if (VECTOR_SIZE * blockX + offset < NR_INPUTS)
-#endif
+  if (VECTOR_DIVISIBLE || (VECTOR_SIZE * blockX + offset < NR_INPUTS))
   {
     int baseline = ((VECTOR_SIZE * blockX + offset) * ((VECTOR_SIZE * blockX + offset) + 1) / 2) + VECTOR_SIZE * blockY;
 
