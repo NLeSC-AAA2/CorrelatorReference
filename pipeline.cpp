@@ -29,7 +29,6 @@ constexpr uint64_t NR_SAMPLES = NR_INPUTS * NR_SAMPLES_PER_CHANNEL * NR_CHANNELS
 #if defined DELAY_COMPENSATION
 constexpr float SUBBAND_BANDWIDTH = 195312.5f;
 #endif
-constexpr int NR_STREAMS = 1;
 constexpr int NR_TAPS = 16;
 constexpr int NR_BASELINES = NR_INPUTS * (NR_INPUTS + 1) / 2;
 constexpr int NR_SAMPLES_PER_MINOR_LOOP = 64;
@@ -39,7 +38,6 @@ constexpr int COMPLEX = 2;
 
 constexpr int ALIGN(int N, int A)
 { return ((N+A-1)/A)*A; }
-
 
 std::ostream& cout = std::cout;
 
@@ -66,15 +64,15 @@ typedef float CorrectedDataType[NR_CHANNELS][ALIGN(NR_INPUTS, VECTOR_SIZE) / VEC
 typedef float VisibilitiesType[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
 
-static InputDataType inputData[NR_STREAMS];
+static InputDataType inputData;
 #if defined CORRECTNESS_TEST
 static FilteredDataType filteredData;
 #endif
 static FilterWeightsType filterWeights;
 static BandPassCorrectionWeights bandPassCorrectionWeights;
-static DelaysType delaysAtBegin[NR_STREAMS], delaysAfterEnd[NR_STREAMS];
+static DelaysType delaysAtBegin, delaysAfterEnd;
 static CorrectedDataType correctedData;
-static VisibilitiesType visibilities[NR_STREAMS + 1]; // this is really too much, but avoids a potential segfault on as (masked!!!) vpackstorehps
+static VisibilitiesType visibilities; // this is really too much, but avoids a potential segfault on as (masked!!!) vpackstorehps
 static uint64_t totalNrOperations;
 
 
@@ -159,7 +157,7 @@ static void filter(FilteredDataType filteredData, const InputDataType inputData,
 }
 
 
-static void copyInputData(int stream)
+static void copyInputData()
 {
   //int8_t *inputDataPtr = &inputData[0][0][0][0];
 
@@ -167,10 +165,10 @@ static void copyInputData(int stream)
   double start_time = omp_get_wtime();
 #endif
 
-#pragma omp target update to(inputData[stream])
+#pragma omp target update to(inputData)
 
 #if defined DELAY_COMPENSATION
-#pragma omp target update to(delaysAtBegin[stream], delaysAfterEnd[stream])
+#pragma omp target update to(delaysAtBegin, delaysAfterEnd)
 #endif
 
 #if !defined CORRECTNESS_TEST
@@ -182,10 +180,10 @@ static void copyInputData(int stream)
 }
 
 
-static void FIR_filter(int stream, unsigned iteration)
+static void FIR_filter(unsigned iteration)
 {
 #pragma omp target map(to:iteration)
-  filter(filteredData, inputData[stream], filterWeights, iteration);
+  filter(filteredData, inputData, filterWeights, iteration);
 }
 
 
@@ -201,19 +199,12 @@ static void checkFIR_FilterTestPattern(const FilteredDataType filteredData)
 
 static void testFIR_Filter()
 {
-#if 0
-  SmartPtr<InputDataType, SmartPtrFree<InputDataType> > inputData;
-
-  if ((posix_memalign((void **) &inputData, 64, sizeof(InputDataType))) != 0)
-    throw std::bad_alloc();
-#endif
-
-  setInputTestPattern(inputData[0]);
+  setInputTestPattern(inputData);
   setFilterWeightsTestPattern(filterWeights);
 #pragma omp target update to(filterWeights)
 
-  copyInputData(0);
-  FIR_filter(0, 0);
+  copyInputData();
+  FIR_filter(0);
 
 #pragma omp target update from(filteredData)
   checkFIR_FilterTestPattern(filteredData);
@@ -459,10 +450,10 @@ static void testTranspose()
 #endif
 
 #if defined DELAY_COMPENSATION
-  setDelaysTestPattern(delaysAtBegin[0], delaysAfterEnd[0]);
-#pragma omp target update to(delaysAtBegin[0], delaysAfterEnd[0])
+  setDelaysTestPattern(delaysAtBegin, delaysAfterEnd);
+#pragma omp target update to(delaysAtBegin, delaysAfterEnd)
 #pragma omp target
-  applyDelays(correctedData, delaysAtBegin[0], delaysAfterEnd[0], 60e6, 0);
+  applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, 60e6, 0);
 #endif
 
 #pragma omp target update from(correctedData)
@@ -732,18 +723,18 @@ static void checkFusedTestPattern(const CorrectedDataType correctedData)
 
 static void testFused()
 {
-  setFusedTestPattern(inputData[0], filterWeights, bandPassCorrectionWeights, delaysAtBegin[0], delaysAfterEnd[0]);
+  setFusedTestPattern(inputData, filterWeights, bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd);
   double FIRfilterTime, FFTtime, trsTime;
 
 #pragma omp target update to(inputData, filterWeights, bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd)
 #pragma omp target
   fused(
-    correctedData, inputData[0], filterWeights,
+    correctedData, inputData, filterWeights,
 #if defined BANDPASS_CORRECTION
     bandPassCorrectionWeights,
 #endif
 #if defined DELAY_COMPENSATION
-    delaysAtBegin[0], delaysAfterEnd[0], 60e6,
+    delaysAtBegin, delaysAfterEnd, 60e6,
 #endif
     0, FIRfilterTime, FFTtime, trsTime
   );
@@ -761,68 +752,6 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 {
 #pragma omp parallel
   {
-#if 0 && defined __AVX__
-    // correlate blocks of 8x8 inputs
-
-    // collapsing three loops on channel, blockX, *and* blockY does not work
-#pragma omp for collapse(2) schedule(dynamic)
-    for (int channel = 0; channel < NR_CHANNELS; channel ++) {
-      for (int block = 0; block < NR_8X8_BLOCKS; block ++) {
-	int blockX = static_cast<int>(sqrtf(8 * static_cast<float>(block) + 1) - .99999f) / 2;
-	int blockY = block - blockX * (blockX + 1) / 2;
-
-	__m256 sum_real[8];
-        __m256 sum_imag[8];
-        for (int i = 0; i < 8; i++) {
-          sum_real[i] = _mm256_setzero_ps();
-          sum_imag[i] = _mm256_setzero_ps();
-        }
-
-	for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-	  __m256 samples_Y_real = _mm256_load_ps(correctedData[channel][blockY][time][REAL]);
-	  __m256 samples_Y_imag = _mm256_load_ps(correctedData[channel][blockY][time][IMAG]);
-
-	  _mm_prefetch(correctedData[channel][blockX][time + 3][REAL], _MM_HINT_T0);
-	  _mm_prefetch(correctedData[channel][blockY][time + 3][REAL], _MM_HINT_T0); 
-          for (int i = 0; i < 8; i++) {
-            __m256 sample_X_real = _mm256_broadcast_ss(&correctedData[channel][blockX][time][REAL][i]);
-            __m256 sample_X_imag = _mm256_broadcast_ss(&correctedData[channel][blockX][time][IMAG][i]);
-
-            sum_real[i] = _mm256_add_ps(_mm256_mul_ps(samples_Y_real, sample_X_real), sum_real[i]);
-            sum_imag[i] = _mm256_add_ps(_mm256_mul_ps(samples_Y_imag, sample_X_real), sum_imag[i]);
-            sum_real[i] = _mm256_add_ps(_mm256_mul_ps(samples_Y_imag, sample_X_imag), sum_real[i]);
-            sum_imag[i] = _mm256_sub_ps(_mm256_mul_ps(samples_Y_real, sample_X_imag), sum_imag[i]);
-          }
-	}
-
-        for (int i = 0; i < 8; i++) {
-            if (VECTOR_DIVISIBLE || (VECTOR_SIZE * blockX + i < NR_INPUTS)) {
-                int baseline = ((VECTOR_SIZE * blockX + i) * ((VECTOR_SIZE * blockX + i) + 1) / 2) + VECTOR_SIZE * blockY;
-
-                if (blockX == blockY) {
-                    static const __m256i masks[8] = {
-                        _mm256_set_epi32( 0,  0,  0,  0,  0,  0,  0, -1),
-                        _mm256_set_epi32( 0,  0,  0,  0,  0,  0, -1, -1),
-                        _mm256_set_epi32( 0,  0,  0,  0,  0, -1, -1, -1),
-                        _mm256_set_epi32( 0,  0,  0,  0, -1, -1, -1, -1),
-                        _mm256_set_epi32( 0,  0,  0, -1, -1, -1, -1, -1),
-                        _mm256_set_epi32( 0,  0, -1, -1, -1, -1, -1, -1),
-                        _mm256_set_epi32( 0, -1, -1, -1, -1, -1, -1, -1),
-                        _mm256_set_epi32(-1, -1, -1, -1, -1, -1, -1, -1),
-                    };
-
-                    __m256i mask = masks[i];
-                    _mm256_maskstore_ps(&visibilities[channel][REAL][baseline], mask, sum_real[i]);
-                    _mm256_maskstore_ps(&visibilities[channel][IMAG][baseline], mask, sum_imag[i]);
-                } else {
-                    _mm256_storeu_ps(&visibilities[channel][REAL][baseline], sum_real[i]);
-                    _mm256_storeu_ps(&visibilities[channel][IMAG][baseline], sum_imag[i]);
-                }
-            }
-        }
-      }
-    }
-#else
 #pragma omp for collapse(2) schedule(dynamic,16)
     for (int channel = 0; channel < NR_CHANNELS; channel ++) {
       for (int statX = 0; statX < NR_INPUTS; statX ++) {
@@ -847,7 +776,6 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 	}
       }
     }
-#endif
   }
 }
 
@@ -881,10 +809,10 @@ static void testCorrelator()
 
 #pragma omp target update to(correctedData)
 #pragma omp target
-  correlate(visibilities[0], correctedData, 0);
-#pragma omp target update from(visibilities[0])
+  correlate(visibilities, correctedData, 0);
+#pragma omp target update from(visibilities)
 
-  checkCorrelatorTestPattern(visibilities[0]);
+  checkCorrelatorTestPattern(visibilities);
 }
 #endif
 
@@ -909,52 +837,7 @@ static void report(const char *msg, uint64_t nrOperations, uint64_t nrBytes, con
 }
 
 
-#if 0
-#pragma omp declare target
-void pipeline(
-  FilteredDataType filteredData,
-  const InputDataType inputData,
-  const FilterWeightsType filterWeights,
-//#if defined BANDPASS_CORRECTION
-  const BandPassCorrectionWeights bandPassCorrectionWeights,
-//#endif
-  CorrectedDataType correctedData,
-  const DelaysType delaysAtBegin,
-  const DelaysType delaysAfterEnd,
-  VisibilitiesType visibilities,
-  double subbandFrequency,
-  double runTimes[6],
-  double powers[6]
-)
-{
-#if !defined USE_FUSED_FILTER
-  filter(filteredData, inputData, filterWeights, runTimes[0], powers[0]);
-  FFT(filteredData, runTimes[1], powers[1]);
-#if defined BANDPASS_CORRECTION
-  transpose(correctedData, filteredData, bandPassCorrectionWeights, runTimes[2], powers[2]);
-#else
-  transpose(correctedData, filteredData, runTimes[2], powers[2]);
-#endif
-#if defined DELAY_COMPENSATION
-  applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency, runTimes[3], powers[3]);
-#endif
-#else
-  fused(correctedData, inputData, filterWeights,
-#if defined BANDPASS_CORRECTION
-  bandPassCorrectionWeights,
-#endif
-#if defined DELAY_COMPENSATION
-  delaysAtBegin, delaysAfterEnd, subbandFrequency,
-#endif
-  runTimes[5], powers[5]);
-#endif
-
-  correlate(visibilities, correctedData, runTimes[4], powers[4]);
-}
-#endif
-
-
-static void pipeline(int stream, float subbandFrequency, unsigned iteration)
+static void pipeline(float subbandFrequency, unsigned iteration)
 {
   double powerStates[8];
 #if defined USE_FUSED_FILTER
@@ -965,13 +848,9 @@ static void pipeline(int stream, float subbandFrequency, unsigned iteration)
   {
     powerStates[1] = omp_get_wtime();
 
-#if 0
-#pragma omp target map(to:subbandFrequency)
-    pipeline(filteredData, inputData[stream], filterWeights, bandPassCorrectionWeights, correctedData, delaysAtBegin[stream], delaysAfterEnd[stream], visibilities[stream], subbandFrequency);
-#else
 #if !defined USE_FUSED_FILTER
 #pragma omp target map(to:iteration)
-    filter(filteredData, inputData[stream], filterWeights, iteration);
+    filter(filteredData, inputData, filterWeights, iteration);
 
     powerStates[2] = omp_get_wtime();
 
@@ -992,17 +871,17 @@ static void pipeline(int stream, float subbandFrequency, unsigned iteration)
 
 #if defined DELAY_COMPENSATION
 #pragma omp target map(to:subbandFrequency, iteration)
-    applyDelays(correctedData, delaysAtBegin[stream], delaysAfterEnd[stream], subbandFrequency, iteration);
+    applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency, iteration);
 #endif
 
 #else
 #pragma omp target map(to:subbandFrequency, iteration) map(from:FIRfilterTime, FFTtime, trsTime)
-    fused(correctedData, inputData[stream], filterWeights,
+    fused(correctedData, inputData, filterWeights,
 #if defined BANDPASS_CORRECTION
     bandPassCorrectionWeights,
 #endif
 #if defined DELAY_COMPENSATION
-    delaysAtBegin[stream], delaysAfterEnd[stream], subbandFrequency,
+    delaysAtBegin, delaysAfterEnd, subbandFrequency,
 #endif
     iteration, FIRfilterTime, FFTtime, trsTime);
 #endif
@@ -1010,8 +889,7 @@ static void pipeline(int stream, float subbandFrequency, unsigned iteration)
     powerStates[5] = omp_get_wtime();
 
 #pragma omp target map(to:iteration)
-    correlate(visibilities[stream], correctedData, iteration);
-#endif
+    correlate(visibilities, correctedData, iteration);
 
     powerStates[6] = omp_get_wtime();
   }
@@ -1088,13 +966,10 @@ int main(int, char **)
 
 #pragma omp target update to(filterWeights)
 
-#pragma omp parallel num_threads(NR_STREAMS)
   {
-    int stream = omp_get_thread_num();
-
-    setInputTestPattern(inputData[stream]);
+    setInputTestPattern(inputData);
 #if defined DELAY_COMPENSATION
-    setDelaysTestPattern(delaysAtBegin[stream], delaysAfterEnd[stream]);
+    setDelaysTestPattern(delaysAtBegin, delaysAfterEnd);
 #endif
 
     setFilterWeightsTestPattern(filterWeights);
@@ -1107,10 +982,10 @@ int main(int, char **)
 	startState = omp_get_wtime();
       }
 
-      pipeline(stream, 60e6, i);
+      pipeline(60e6, i);
     }
     cout << std::endl;
-    checkCorrelatorTestPattern(visibilities[stream]);
+    checkCorrelatorTestPattern(visibilities);
 
   }
 
