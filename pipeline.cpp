@@ -553,26 +553,22 @@ fused_FFT
 }
 
 
+#if defined DELAY_COMPENSATION
 static void
-fused_TransposeInit(
-#if defined DELAY_COMPENSATION
- float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-, float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
-#endif
+fused_TransposeInit
+( float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
+, float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 #if defined BANDPASS_CORRECTION
- const BandPassCorrectionWeights bandPassCorrectionWeights,
+, const BandPassCorrectionWeights bandPassCorrectionWeights
 #endif
-#if defined DELAY_COMPENSATION
- const DelaysType delaysAtBegin
+, const DelaysType delaysAtBegin
 , const DelaysType delaysAfterEnd
-, float subbandFrequency,
-#endif
- unsigned input
+, float subbandFrequency
+, unsigned input
 , unsigned
 , double &trsTime
 )
 {
-#if defined DELAY_COMPENSATION
     trsTime -= rdtsc();
 
     // prepare delay compensation: compute complex weights
@@ -594,8 +590,8 @@ fused_TransposeInit(
     }
 
     trsTime += rdtsc();
-#endif
 }
+#endif
 
 
 static void
@@ -618,8 +614,6 @@ fused_Transpose
     // BandPass correction, if not doing delay compensation
 
     for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
-#pragma simd
-#pragma vector aligned
         for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
             for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
                 filteredData[minorTime][real_imag][channel] *= bandPassCorrectionWeights[channel];
@@ -654,10 +648,10 @@ fused
 ( CorrectedDataType correctedData
 , const InputDataType inputData
 , const FilterWeightsType
+#if defined DELAY_COMPENSATION
 #if defined BANDPASS_CORRECTION
 , const BandPassCorrectionWeights bandPassCorrectionWeights
 #endif
-#if defined DELAY_COMPENSATION
 , const DelaysType delaysAtBegin
 , const DelaysType delaysAfterEnd
 , float subbandFrequency
@@ -680,19 +674,13 @@ fused
 #if defined DELAY_COMPENSATION
             float v[COMPLEX][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
             float dv[COMPLEX][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
-#endif
 
-            fused_TransposeInit(
-#if defined DELAY_COMPENSATION
-                    v, dv,
-#endif
+            fused_TransposeInit(v, dv,
 #if defined BANDPASS_CORRECTION
                     bandPassCorrectionWeights,
 #endif
-#if defined DELAY_COMPENSATION
-                    delaysAtBegin, delaysAfterEnd, subbandFrequency,
+                    delaysAtBegin, delaysAfterEnd, subbandFrequency, input, iteration, trsTime);
 #endif
-                    input, iteration, trsTime);
             fused_FIRfilterInit(inputData, history, input, iteration, FIRfilterTime);
 
             for (unsigned majorTime = 0; majorTime < NR_SAMPLES_PER_CHANNEL; majorTime += NR_SAMPLES_PER_MINOR_LOOP) {
@@ -767,10 +755,10 @@ testFused()
 
     fused(
             correctedData, inputData, filterWeights,
+#if defined DELAY_COMPENSATION
 #if defined BANDPASS_CORRECTION
             bandPassCorrectionWeights,
 #endif
-#if defined DELAY_COMPENSATION
             delaysAtBegin, delaysAfterEnd, 60e6,
 #endif
             0, FIRfilterTime, FFTtime, trsTime
@@ -879,7 +867,11 @@ report
 
 
 static void
-pipeline(float subbandFrequency, unsigned iteration)
+pipeline(
+#if defined DELAY_COMPENSATION
+float subbandFrequency,
+#endif
+unsigned iteration)
 {
     double powerStates[8];
     double fusedTime, FIRfilterTime, FFTtime, trsTime;
@@ -911,10 +903,10 @@ pipeline(float subbandFrequency, unsigned iteration)
 #endif
         } else {
             fused(correctedData, inputData, filterWeights,
+#if defined DELAY_COMPENSATION
 #if defined BANDPASS_CORRECTION
                     bandPassCorrectionWeights,
 #endif
-#if defined DELAY_COMPENSATION
                     delaysAtBegin, delaysAfterEnd, subbandFrequency,
 #endif
                     iteration, FIRfilterTime, FFTtime, trsTime);
@@ -1006,7 +998,11 @@ int main(int, char **)
                 startState = omp_get_wtime();
             }
 
-            pipeline(60e6, i);
+            pipeline(
+#if defined DELAY_COMPENSATION
+                    60e6,
+#endif
+                    i);
         }
     }
     cout << std::endl;
