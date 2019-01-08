@@ -35,12 +35,10 @@ constexpr int REAL = 0;
 constexpr int IMAG = 1;
 constexpr int COMPLEX = 2;
 
+using std::cout, std::cerr;
+
 constexpr int ALIGN(int N, int A)
 { return ((N+A-1)/A)*A; }
-
-std::ostream& cout = std::cout;
-
-std::ostream& cerr = std::cerr;
 
 static inline double
 rdtsc()
@@ -169,12 +167,6 @@ copyInputData()
     double start_time = omp_get_wtime();
 #endif
 
-#pragma omp target update to(inputData)
-
-#if defined DELAY_COMPENSATION
-#pragma omp target update to(delaysAtBegin, delaysAfterEnd)
-#endif
-
 #if !defined CORRECTNESS_TEST
     double copy_time = omp_get_wtime() - start_time;
 
@@ -188,7 +180,6 @@ copyInputData()
 static void
 FIR_filter(unsigned iteration)
 {
-#pragma omp target map(to:iteration)
     filter(filteredData, inputData, filterWeights, iteration);
 }
 
@@ -213,12 +204,10 @@ testFIR_Filter()
 {
     setInputTestPattern(inputData);
     setFilterWeightsTestPattern(filterWeights);
-#pragma omp target update to(filterWeights)
 
     copyInputData();
     FIR_filter(0);
 
-#pragma omp target update from(filteredData)
     checkFIR_FilterTestPattern(filteredData);
 }
 #endif
@@ -469,24 +458,17 @@ testTranspose()
 
 #if defined BANDPASS_CORRECTION
     setBandPassTestPattern(bandPassCorrectionWeights);
-#pragma omp target update to(filteredData, bandPassCorrectionWeights)
-#pragma omp target
-  transpose(correctedData, filteredData, bandPassCorrectionWeights, 0);
+    transpose(correctedData, filteredData, bandPassCorrectionWeights, 0);
 #else
-#pragma omp target update to(filteredData)
-#pragma omp target
-  transpose(correctedData, filteredData, 0);
+    transpose(correctedData, filteredData, 0);
 #endif
 
 #if defined DELAY_COMPENSATION
-  setDelaysTestPattern(delaysAtBegin, delaysAfterEnd);
-#pragma omp target update to(delaysAtBegin, delaysAfterEnd)
-#pragma omp target
-  applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, 60e6, 0);
+    setDelaysTestPattern(delaysAtBegin, delaysAfterEnd);
+    applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, 60e6, 0);
 #endif
 
-#pragma omp target update from(correctedData)
-  checkTransposeTestPattern(correctedData);
+    checkTransposeTestPattern(correctedData);
 }
 #endif
 
@@ -786,8 +768,6 @@ testFused()
     setFusedTestPattern(inputData, filterWeights, bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd);
     double FIRfilterTime, FFTtime, trsTime;
 
-#pragma omp target update to(inputData, filterWeights, bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd)
-#pragma omp target
     fused(
             correctedData, inputData, filterWeights,
 #if defined BANDPASS_CORRECTION
@@ -798,7 +778,6 @@ testFused()
 #endif
             0, FIRfilterTime, FFTtime, trsTime
          );
-#pragma omp target update from(correctedData)
 
     checkFusedTestPattern(correctedData);
 }
@@ -876,10 +855,7 @@ testCorrelator()
 {
     setCorrelatorTestPattern(correctedData);
 
-#pragma omp target update to(correctedData)
-#pragma omp target
     correlate(visibilities, correctedData, 0);
-#pragma omp target update from(visibilities)
 
     checkCorrelatorTestPattern(visibilities);
 }
@@ -927,33 +903,27 @@ pipeline(float subbandFrequency, unsigned iteration)
         powerStates[1] = omp_get_wtime();
 
 #if !defined USE_FUSED_FILTER
-#pragma omp target map(to:iteration)
         filter(filteredData, inputData, filterWeights, iteration);
 
         powerStates[2] = omp_get_wtime();
 
-#pragma omp target
         FFT(filteredData, iteration);
 
         powerStates[3] = omp_get_wtime();
 
 #if defined BANDPASS_CORRECTION
-#pragma omp target map(to:iteration)
         transpose(correctedData, filteredData, bandPassCorrectionWeights, iteration);
 #else
-#pragma omp target map(to:iteration)
         transpose(correctedData, filteredData, iteration);
 #endif
 
         powerStates[4] = omp_get_wtime();
 
 #if defined DELAY_COMPENSATION
-#pragma omp target map(to:subbandFrequency, iteration)
         applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency, iteration);
 #endif
 
 #else
-#pragma omp target map(to:subbandFrequency, iteration) map(from:FIRfilterTime, FFTtime, trsTime)
         fused(correctedData, inputData, filterWeights,
 #if defined BANDPASS_CORRECTION
                 bandPassCorrectionWeights,
@@ -966,7 +936,6 @@ pipeline(float subbandFrequency, unsigned iteration)
 
         powerStates[5] = omp_get_wtime();
 
-#pragma omp target map(to:iteration)
         correlate(visibilities, correctedData, iteration);
 
         powerStates[6] = omp_get_wtime();
@@ -1026,7 +995,6 @@ int main(int, char **)
     double stopState;
 #endif
 
-#pragma omp target
     fftInit();
 
 #if defined CORRECTNESS_TEST
@@ -1039,10 +1007,7 @@ int main(int, char **)
 
 #if defined BANDPASS_CORRECTION
     setBandPassTestPattern(bandPassCorrectionWeights);
-#pragma omp target update to(bandPassCorrectionWeights)
 #endif
-
-#pragma omp target update to(filterWeights)
 
     {
         setInputTestPattern(inputData);
