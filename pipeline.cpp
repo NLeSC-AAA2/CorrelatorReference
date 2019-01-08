@@ -41,6 +41,8 @@ constexpr int COMPLEX = 2;
 constexpr int ALIGN(int N, int A)
 { return ((N+A-1)/A)*A; }
 
+constexpr int NR_8X8_BLOCKS = (ALIGN(NR_INPUTS, 8) / 8) * (ALIGN(NR_INPUTS, 8) / 8 + 1) / 2;
+
 std::ostream& cout = std::cout;
 
 std::ostream& cerr = std::cerr;
@@ -76,21 +78,6 @@ static DelaysType delaysAtBegin[NR_STREAMS], delaysAfterEnd[NR_STREAMS];
 static CorrectedDataType correctedData;
 static VisibilitiesType visibilities[NR_STREAMS + 1]; // this is really too much, but avoids a potential segfault on as (masked!!!) vpackstorehps
 static uint64_t totalNrOperations;
-
-
-#if defined __AVX__
-
-std::ostream &operator << (std::ostream &str, __m256 v)
-{
-  str << '[';
-
-  for (int i = 0; i < 8; i ++)
-    str << ((float *) &v)[i] << (i == 7 ? ']' : ',');
-
-  return str;
-}
-
-#endif
 
 
 ////// FIR filter
@@ -193,7 +180,6 @@ static void filter(FilteredDataType filteredData, const InputDataType inputData,
 
       for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
 	for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
-#pragma simd
 	  for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
 	    history[real_imag][(time - 1) % NR_TAPS][channel] = inputData[input][real_imag][time + NR_TAPS - 1][channel];
 
@@ -441,14 +427,15 @@ static void applyDelays(CorrectedDataType correctedData, const DelaysType delays
 	  }
 	}
 
+#if defined __AVX__
 	__m256 v_r = _mm256_load_ps(v_rf);
 	__m256 v_i = _mm256_load_ps(v_if);
 	__m256 dv_r = _mm256_load_ps(dv_rf);
 	__m256 dv_i = _mm256_load_ps(dv_if);
 
 	for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-	  __m256 sample_r = _mm256_load_ps(&correctedData[channel][inputMajor][time][REAL][0]);
-	  __m256 sample_i = _mm256_load_ps(&correctedData[channel][inputMajor][time][IMAG][0]);
+	  __m256 sample_r = _mm256_load_ps(correctedData[channel][inputMajor][time][REAL]);
+	  __m256 sample_i = _mm256_load_ps(correctedData[channel][inputMajor][time][IMAG]);
 
 	  __m256 tmp = _mm256_mul_ps(sample_r, v_i);
 	  sample_r = _mm256_sub_ps(_mm256_mul_ps(sample_r, v_r), _mm256_mul_ps(sample_i, v_i));
@@ -458,9 +445,28 @@ static void applyDelays(CorrectedDataType correctedData, const DelaysType delays
 	  v_r = _mm256_sub_ps(_mm256_mul_ps(v_r, dv_r), _mm256_mul_ps(v_i, dv_i));
 	  v_i = _mm256_add_ps(_mm256_mul_ps(v_i, dv_r), tmp);
 
-	  _mm256_stream_ps(&correctedData[channel][inputMajor][time][REAL][0], sample_r);
-	  _mm256_stream_ps(&correctedData[channel][inputMajor][time][IMAG][0], sample_i);
+	  _mm256_stream_ps(correctedData[channel][inputMajor][time][REAL], sample_r);
+	  _mm256_stream_ps(correctedData[channel][inputMajor][time][IMAG], sample_i);
 	}
+#else
+	for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
+            for (int i = 0; i < 8; i++) {
+                float sample_r = correctedData[channel][inputMajor][time][REAL][i];
+                float sample_i = correctedData[channel][inputMajor][time][IMAG][i];
+
+                float tmp = sample_r * v_if[i];
+                sample_r = (sample_r * v_rf[i]) - (sample_i * v_if[i]);
+                sample_i = (sample_i * v_rf[i]) + tmp;
+
+                tmp = v_rf[i] * dv_if[i];
+                v_rf[i] = (v_rf[i] * dv_rf[i]) - (v_if[i] * dv_if[i]);
+                v_if[i] = (v_if[i] * dv_rf[i]) + tmp;
+
+                correctedData[channel][inputMajor][time][REAL][i] = sample_r;
+                correctedData[channel][inputMajor][time][IMAG][i] = sample_i;
+            }
+	}
+#endif
       }
     }
   }
@@ -829,72 +835,12 @@ static void testFused()
 
 ////// correlator
 
-#if defined __AVX__
-
-static inline void correlate_column(__m256 &sum_real, __m256 &sum_imag, const float *sample_X_real_ptr, const float *sample_X_imag_ptr, __m256 samples_Y_real, __m256 samples_Y_imag)
-{
-  __m256 sample_X_real = _mm256_broadcast_ss(sample_X_real_ptr);
-  __m256 sample_X_imag = _mm256_broadcast_ss(sample_X_imag_ptr);
-
-#if defined __AVX2__
-  sum_real = _mm256_fmadd_ps(samples_Y_real, sample_X_real, sum_real);
-  sum_real = _mm256_fmadd_ps(samples_Y_imag, sample_X_imag, sum_real);
-  sum_imag = _mm256_fmadd_ps(samples_Y_imag, sample_X_real, sum_imag);
-  sum_imag = _mm256_fnmadd_ps(samples_Y_real, sample_X_imag, sum_imag);
-#else
-  sum_real = _mm256_add_ps(_mm256_mul_ps(samples_Y_real, sample_X_real), sum_real);
-  sum_imag = _mm256_add_ps(_mm256_mul_ps(samples_Y_imag, sample_X_real), sum_imag);
-  sum_real = _mm256_add_ps(_mm256_mul_ps(samples_Y_imag, sample_X_imag), sum_real);
-  sum_imag = _mm256_sub_ps(_mm256_mul_ps(samples_Y_real, sample_X_imag), sum_imag);
-#endif
-}
-
-#endif
-
-
-#if defined __AVX__
-
-static inline void write_visibilities(VisibilitiesType visibilities, int channel, int blockX, int blockY, int offset, __m256 sum_real, __m256 sum_imag)
-{
-  if (VECTOR_DIVISIBLE || (VECTOR_SIZE * blockX + offset < NR_INPUTS))
-  {
-    int baseline = ((VECTOR_SIZE * blockX + offset) * ((VECTOR_SIZE * blockX + offset) + 1) / 2) + VECTOR_SIZE * blockY;
-
-    if (blockX == blockY) {
-      static const __m256i masks[8] = {
-	_mm256_set_epi32( 0,  0,  0,  0,  0,  0,  0, -1),
-	_mm256_set_epi32( 0,  0,  0,  0,  0,  0, -1, -1),
-	_mm256_set_epi32( 0,  0,  0,  0,  0, -1, -1, -1),
-	_mm256_set_epi32( 0,  0,  0,  0, -1, -1, -1, -1),
-	_mm256_set_epi32( 0,  0,  0, -1, -1, -1, -1, -1),
-	_mm256_set_epi32( 0,  0, -1, -1, -1, -1, -1, -1),
-	_mm256_set_epi32( 0, -1, -1, -1, -1, -1, -1, -1),
-	_mm256_set_epi32(-1, -1, -1, -1, -1, -1, -1, -1),
-      };
-
-      __m256i mask = masks[offset];
-      _mm256_maskstore_ps(&visibilities[channel][REAL][baseline], mask, sum_real);
-      _mm256_maskstore_ps(&visibilities[channel][IMAG][baseline], mask, sum_imag);
-    } else {
-      _mm256_storeu_ps(&visibilities[channel][REAL][baseline], sum_real);
-      _mm256_storeu_ps(&visibilities[channel][IMAG][baseline], sum_imag);
-    }
-  }
-//for (int i = 0; i < 8; i ++)
-  //std::cout << visibilities[5][0][i] << ' ';
-//std::cout << std::endl;
-}
-
-#endif
-
-
 static void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedData, unsigned)
 {
 #pragma omp parallel
   {
-#if 1
+#if defined __AVX__
     // correlate blocks of 8x8 inputs
-#define NR_8X8_BLOCKS ((ALIGN(NR_INPUTS, 8) / 8) * (ALIGN(NR_INPUTS, 8) / 8 + 1) / 2)
 
     // collapsing three loops on channel, blockX, *and* blockY does not work
 #pragma omp for collapse(2) schedule(dynamic)
@@ -903,47 +849,62 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 	int blockX = static_cast<int>(sqrtf(8 * static_cast<float>(block) + 1) - .99999f) / 2;
 	int blockY = block - blockX * (blockX + 1) / 2;
 
-	__m256 sum_A_real = _mm256_setzero_ps(), sum_A_imag = _mm256_setzero_ps();
-	__m256 sum_B_real = _mm256_setzero_ps(), sum_B_imag = _mm256_setzero_ps();
-	__m256 sum_C_real = _mm256_setzero_ps(), sum_C_imag = _mm256_setzero_ps();
-	__m256 sum_D_real = _mm256_setzero_ps(), sum_D_imag = _mm256_setzero_ps();
-	__m256 sum_E_real = _mm256_setzero_ps(), sum_E_imag = _mm256_setzero_ps();
-	__m256 sum_F_real = _mm256_setzero_ps(), sum_F_imag = _mm256_setzero_ps();
-	__m256 sum_G_real = _mm256_setzero_ps(), sum_G_imag = _mm256_setzero_ps();
-	__m256 sum_H_real = _mm256_setzero_ps(), sum_H_imag = _mm256_setzero_ps();
+	__m256 sum_real[8];
+        __m256 sum_imag[8];
+        for (int i = 0; i < 8; i++) {
+          sum_real[i] = _mm256_setzero_ps();
+          sum_imag[i] = _mm256_setzero_ps();
+        }
 
 	for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-	  __m256 samples_Y_real = _mm256_load_ps(&correctedData[channel][blockY][time][REAL][0]);
-	  __m256 samples_Y_imag = _mm256_load_ps(&correctedData[channel][blockY][time][IMAG][0]);
+	  __m256 samples_Y_real = _mm256_load_ps(correctedData[channel][blockY][time][REAL]);
+	  __m256 samples_Y_imag = _mm256_load_ps(correctedData[channel][blockY][time][IMAG]);
 
-	  _mm_prefetch((const char *) &correctedData[channel][blockX][time + 3][REAL][0], _MM_HINT_T0);
-	  _mm_prefetch((const char *) &correctedData[channel][blockY][time + 3][REAL][0], _MM_HINT_T0); 
-	  correlate_column(sum_A_real, sum_A_imag, &correctedData[channel][blockX][time][REAL][0], &correctedData[channel][blockX][time][IMAG][0], samples_Y_real, samples_Y_imag);
-	  correlate_column(sum_B_real, sum_B_imag, &correctedData[channel][blockX][time][REAL][1], &correctedData[channel][blockX][time][IMAG][1], samples_Y_real, samples_Y_imag);
-	  correlate_column(sum_C_real, sum_C_imag, &correctedData[channel][blockX][time][REAL][2], &correctedData[channel][blockX][time][IMAG][2], samples_Y_real, samples_Y_imag);
-	  correlate_column(sum_D_real, sum_D_imag, &correctedData[channel][blockX][time][REAL][3], &correctedData[channel][blockX][time][IMAG][3], samples_Y_real, samples_Y_imag);
-	  correlate_column(sum_E_real, sum_E_imag, &correctedData[channel][blockX][time][REAL][4], &correctedData[channel][blockX][time][IMAG][4], samples_Y_real, samples_Y_imag);
-	  correlate_column(sum_F_real, sum_F_imag, &correctedData[channel][blockX][time][REAL][5], &correctedData[channel][blockX][time][IMAG][5], samples_Y_real, samples_Y_imag);
-	  correlate_column(sum_G_real, sum_G_imag, &correctedData[channel][blockX][time][REAL][6], &correctedData[channel][blockX][time][IMAG][6], samples_Y_real, samples_Y_imag);
-	  correlate_column(sum_H_real, sum_H_imag, &correctedData[channel][blockX][time][REAL][7], &correctedData[channel][blockX][time][IMAG][7], samples_Y_real, samples_Y_imag);
+	  _mm_prefetch(correctedData[channel][blockX][time + 3][REAL], _MM_HINT_T0);
+	  _mm_prefetch(correctedData[channel][blockY][time + 3][REAL], _MM_HINT_T0); 
+          for (int i = 0; i < 8; i++) {
+            __m256 sample_X_real = _mm256_broadcast_ss(&correctedData[channel][blockX][time][REAL][i]);
+            __m256 sample_X_imag = _mm256_broadcast_ss(&correctedData[channel][blockX][time][IMAG][i]);
+
+            sum_real[i] = _mm256_add_ps(_mm256_mul_ps(samples_Y_real, sample_X_real), sum_real[i]);
+            sum_imag[i] = _mm256_add_ps(_mm256_mul_ps(samples_Y_imag, sample_X_real), sum_imag[i]);
+            sum_real[i] = _mm256_add_ps(_mm256_mul_ps(samples_Y_imag, sample_X_imag), sum_real[i]);
+            sum_imag[i] = _mm256_sub_ps(_mm256_mul_ps(samples_Y_real, sample_X_imag), sum_imag[i]);
+          }
 	}
 
-	write_visibilities(visibilities, channel, blockX, blockY, 0, sum_A_real, sum_A_imag);
-	write_visibilities(visibilities, channel, blockX, blockY, 1, sum_B_real, sum_B_imag);
-	write_visibilities(visibilities, channel, blockX, blockY, 2, sum_C_real, sum_C_imag);
-	write_visibilities(visibilities, channel, blockX, blockY, 3, sum_D_real, sum_D_imag);
-	write_visibilities(visibilities, channel, blockX, blockY, 4, sum_E_real, sum_E_imag);
-	write_visibilities(visibilities, channel, blockX, blockY, 5, sum_F_real, sum_F_imag);
-	write_visibilities(visibilities, channel, blockX, blockY, 6, sum_G_real, sum_G_imag);
-	write_visibilities(visibilities, channel, blockX, blockY, 7, sum_H_real, sum_H_imag);
+        for (int i = 0; i < 8; i++) {
+            if (VECTOR_DIVISIBLE || (VECTOR_SIZE * blockX + i < NR_INPUTS)) {
+                int baseline = ((VECTOR_SIZE * blockX + i) * ((VECTOR_SIZE * blockX + i) + 1) / 2) + VECTOR_SIZE * blockY;
+
+                if (blockX == blockY) {
+                    static const __m256i masks[8] = {
+                        _mm256_set_epi32( 0,  0,  0,  0,  0,  0,  0, -1),
+                        _mm256_set_epi32( 0,  0,  0,  0,  0,  0, -1, -1),
+                        _mm256_set_epi32( 0,  0,  0,  0,  0, -1, -1, -1),
+                        _mm256_set_epi32( 0,  0,  0,  0, -1, -1, -1, -1),
+                        _mm256_set_epi32( 0,  0,  0, -1, -1, -1, -1, -1),
+                        _mm256_set_epi32( 0,  0, -1, -1, -1, -1, -1, -1),
+                        _mm256_set_epi32( 0, -1, -1, -1, -1, -1, -1, -1),
+                        _mm256_set_epi32(-1, -1, -1, -1, -1, -1, -1, -1),
+                    };
+
+                    __m256i mask = masks[i];
+                    _mm256_maskstore_ps(&visibilities[channel][REAL][baseline], mask, sum_real[i]);
+                    _mm256_maskstore_ps(&visibilities[channel][IMAG][baseline], mask, sum_imag[i]);
+                } else {
+                    _mm256_storeu_ps(&visibilities[channel][REAL][baseline], sum_real[i]);
+                    _mm256_storeu_ps(&visibilities[channel][IMAG][baseline], sum_imag[i]);
+                }
+            }
+        }
       }
     }
 #else
 #pragma omp for collapse(2) schedule(dynamic,16)
     for (int channel = 0; channel < NR_CHANNELS; channel ++) {
-      for (int statY = 0; statY < NR_INPUTS; statY ++) {
-#pragma omp simd
-	for (int statX = 0; statX <= statY; statX ++) {
+      for (int statX = 0; statX < NR_INPUTS; statX ++) {
+	for (int statY = 0; statY <= statX; statY ++) {
 	  float sum_real = 0, sum_imag = 0;
 
 	  for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
@@ -952,10 +913,10 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 	    float sample_Y_real = correctedData[channel][statY / VECTOR_SIZE][time][REAL][statY % VECTOR_SIZE];
 	    float sample_Y_imag = correctedData[channel][statY / VECTOR_SIZE][time][IMAG][statY % VECTOR_SIZE];
 
-	    sum_real += sample_X_real * sample_Y_real;
-	    sum_imag += sample_X_imag * sample_Y_real;
-	    sum_real += sample_X_imag * sample_Y_imag;
-	    sum_imag -= sample_X_real * sample_Y_imag;
+	    sum_real += sample_Y_real * sample_X_real;
+	    sum_imag += sample_Y_imag * sample_X_real;
+	    sum_real += sample_Y_imag * sample_X_imag;
+	    sum_imag = (sample_Y_real * sample_X_imag) - sum_imag;
 	  }
 
 	  int baseline = statX * (statX + 1) / 2 + statY;
