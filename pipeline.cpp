@@ -22,7 +22,6 @@
 
 constexpr int NR_INPUTS = 2 * 576;
 constexpr int VECTOR_SIZE = 8;
-constexpr bool VECTOR_DIVISIBLE = NR_INPUTS % VECTOR_SIZE == 0;
 
 constexpr int NR_CHANNELS = 64;
 constexpr int NR_SAMPLES_PER_CHANNEL = 3072;
@@ -41,7 +40,6 @@ constexpr int COMPLEX = 2;
 constexpr int ALIGN(int N, int A)
 { return ((N+A-1)/A)*A; }
 
-constexpr int NR_8X8_BLOCKS = (ALIGN(NR_INPUTS, 8) / 8) * (ALIGN(NR_INPUTS, 8) / 8 + 1) / 2;
 
 std::ostream& cout = std::cout;
 
@@ -839,7 +837,7 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 {
 #pragma omp parallel
   {
-#if defined __AVX__
+#if 0 && defined __AVX__
     // correlate blocks of 8x8 inputs
 
     // collapsing three loops on channel, blockX, *and* blockY does not work
