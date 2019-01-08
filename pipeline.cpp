@@ -19,7 +19,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-
 constexpr int NR_INPUTS = 2 * 576;
 constexpr int VECTOR_SIZE = 8;
 
@@ -72,7 +71,7 @@ static FilterWeightsType filterWeights;
 static BandPassCorrectionWeights bandPassCorrectionWeights;
 static DelaysType delaysAtBegin, delaysAfterEnd;
 static CorrectedDataType correctedData;
-static VisibilitiesType visibilities; // this is really too much, but avoids a potential segfault on as (masked!!!) vpackstorehps
+static VisibilitiesType visibilities;
 static uint64_t totalNrOperations;
 
 
@@ -415,8 +414,6 @@ static void setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfte
 #if defined CORRECTNESS_TEST
 static void setTransposeTestPattern(FilteredDataType filteredData)
 {
-  memset(filteredData, 0, sizeof filteredData);
-
   if (NR_INPUTS > 22 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 5) {
     filteredData[22][99][REAL][5] = 2;
     filteredData[22][99][IMAG][5] = 3;
@@ -783,8 +780,6 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 #if defined CORRECTNESS_TEST
 static void setCorrelatorTestPattern(CorrectedDataType correctedData)
 {
-  memset(correctedData, 0, sizeof correctedData);
-
   if constexpr (NR_CHANNELS > 5 && NR_SAMPLES_PER_CHANNEL > 99 && NR_INPUTS > 19) {
     correctedData[5][ 0 / VECTOR_SIZE][99][REAL][ 0 % VECTOR_SIZE] = 3;
     correctedData[5][ 0 / VECTOR_SIZE][99][IMAG][ 0 % VECTOR_SIZE] = 4;

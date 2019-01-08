@@ -16,7 +16,7 @@ endif
 WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wno-unknown-pragmas -std=c++17
 
 ifeq ($(CXX), clang++)
-    WARNINGS+=-Wno-sizeof-array-argument -Wno-sizeof-pointer-memaccess -Wno-unused-parameter
+    WARNINGS+=-Wno-unused-parameter
     CFLAGS+=-isystem/cm/shared/apps/intel/composer_xe/2015.5.223/mkl/include/ \
             -stdlib=libc++
     LDFLAGS+=-stdlib=libc++
@@ -50,7 +50,7 @@ pipeline-%.o: CFLAGS+=$(call if-contains,$*,fused,-DUSE_FUSED_FILTER) \
 
 pipeline-%.o: pipeline.cpp
 	$(PRINTF) " CC $<\n"
-	$(AT)$(CXX) $(CFLAGS) -DCORRECTNESS_TEST -mcmodel=large -march=sandybridge -fopenmp -g -O3 -c -o $@ $<
+	$(AT)$(CXX) $(CFLAGS) -DCORRECTNESS_TEST -mcmodel=large -fopenmp -g -O3 -c -o $@ $<
 
 pipeline-%: pipeline-%.o
 	$(PRINTF) " LD $@\n"
