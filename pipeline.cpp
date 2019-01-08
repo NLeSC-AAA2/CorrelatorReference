@@ -113,60 +113,7 @@ static void filter(FilteredDataType filteredData, const InputDataType inputData,
 {
 #pragma omp parallel
   {
-#if defined __AVX__
-#pragma omp for schedule(dynamic)
-    for (unsigned input = 0; input < NR_INPUTS; input ++) {
-      float history[COMPLEX][NR_TAPS][NR_CHANNELS] __attribute__((aligned(32)));
-
-      for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
-	for (unsigned time = 0; time < NR_TAPS - 1; time ++) {
-	  for (unsigned channelBase = 0; channelBase < NR_CHANNELS; channelBase += VECTOR_SIZE) {
-	    __m128 eight_signed_chars = _mm_loadl_pi(eight_signed_chars, (__m64 *) &inputData[input][real_imag][time][channelBase]);
-	    __m128i eight_signed_chars_i = _mm_castps_si128(eight_signed_chars);
-	    __m128i four_high_bytes = _mm_srli_si128(eight_signed_chars_i, 4);
-	    __m128i four_low_dwords = _mm_cvtepi8_epi32(eight_signed_chars_i);
-	    __m128i four_high_dwords = _mm_cvtepi8_epi32(four_high_bytes);
-	    __m256i eight_dwords = _mm256_castsi128_si256(four_low_dwords);
-	    eight_dwords = _mm256_insertf128_si256(eight_dwords, four_high_dwords, 1);
-	    __m256 eight_floats = _mm256_cvtepi32_ps(eight_dwords);
-	    _mm256_store_ps(&history[real_imag][time][channelBase], eight_floats);
-	  }
-	}
-      }
-
-      for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-	for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
-	  for (unsigned channelBase = 0; channelBase < NR_CHANNELS; channelBase += VECTOR_SIZE) {
-	    __m128 eight_signed_chars = _mm_loadl_pi(eight_signed_chars, (__m64 *) &inputData[input][real_imag][time + NR_TAPS - 1][channelBase]);
-	    __m128i eight_signed_chars_i = _mm_castps_si128(eight_signed_chars);
-	    __m128i four_high_bytes = _mm_srli_si128(eight_signed_chars_i, 4);
-	    __m128i four_low_dwords = _mm_cvtepi8_epi32(eight_signed_chars_i);
-	    __m128i four_high_dwords = _mm_cvtepi8_epi32(four_high_bytes);
-	    __m256i eight_dwords = _mm256_castsi128_si256(four_low_dwords);
-	    eight_dwords = _mm256_insertf128_si256(eight_dwords, four_high_dwords, 1);
-	    __m256 eight_floats = _mm256_cvtepi32_ps(eight_dwords);
-	    _mm256_store_ps(&history[real_imag][(time - 1) % NR_TAPS][channelBase], eight_floats);
-
-	    __m256 sum = _mm256_setzero_ps();
-
-	    for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
-	      __m256 weights = _mm256_load_ps(&filterWeights[tap][channelBase]);
-	      __m256 samples = _mm256_load_ps(&history[real_imag][(time + tap) % NR_TAPS][channelBase]);
-#if defined __AVX2__
-	      sum = _mm256_fmadd_ps(weights, samples, sum);
-#else
-	      sum = _mm256_add_ps(_mm256_mul_ps(weights, samples), sum);
-#endif
-	    }
-
-	    _mm256_stream_ps(&filteredData[input][time][real_imag][channelBase], sum);
-	  }
-	}
-      }
-    }
-
-    _mm_mfence();
-#elif 1
+#if 1
 #pragma omp for schedule(dynamic)
     for (unsigned input = 0; input < NR_INPUTS; input ++) {
       float history[COMPLEX][NR_TAPS][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
@@ -183,7 +130,7 @@ static void filter(FilteredDataType filteredData, const InputDataType inputData,
 
 	    float sum = 0;
 
-	    for (int tap = 0; tap < NR_TAPS; tap ++)
+	    for (unsigned tap = 0; tap < NR_TAPS; tap ++)
 	      sum += filterWeights[tap][channel] * history[real_imag][(time + tap) % NR_TAPS][channel];
 
 	    filteredData[input][time][real_imag][channel] = sum;
@@ -425,28 +372,6 @@ static void applyDelays(CorrectedDataType correctedData, const DelaysType delays
 	  }
 	}
 
-#if defined __AVX__
-	__m256 v_r = _mm256_load_ps(v_rf);
-	__m256 v_i = _mm256_load_ps(v_if);
-	__m256 dv_r = _mm256_load_ps(dv_rf);
-	__m256 dv_i = _mm256_load_ps(dv_if);
-
-	for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-	  __m256 sample_r = _mm256_load_ps(correctedData[channel][inputMajor][time][REAL]);
-	  __m256 sample_i = _mm256_load_ps(correctedData[channel][inputMajor][time][IMAG]);
-
-	  __m256 tmp = _mm256_mul_ps(sample_r, v_i);
-	  sample_r = _mm256_sub_ps(_mm256_mul_ps(sample_r, v_r), _mm256_mul_ps(sample_i, v_i));
-	  sample_i = _mm256_add_ps(_mm256_mul_ps(sample_i, v_r), tmp);
-
-	  tmp = _mm256_mul_ps(v_r, dv_i);
-	  v_r = _mm256_sub_ps(_mm256_mul_ps(v_r, dv_r), _mm256_mul_ps(v_i, dv_i));
-	  v_i = _mm256_add_ps(_mm256_mul_ps(v_i, dv_r), tmp);
-
-	  _mm256_stream_ps(correctedData[channel][inputMajor][time][REAL], sample_r);
-	  _mm256_stream_ps(correctedData[channel][inputMajor][time][IMAG], sample_i);
-	}
-#else
 	for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
             for (int i = 0; i < 8; i++) {
                 float sample_r = correctedData[channel][inputMajor][time][REAL][i];
@@ -464,7 +389,6 @@ static void applyDelays(CorrectedDataType correctedData, const DelaysType delays
                 correctedData[channel][inputMajor][time][IMAG][i] = sample_i;
             }
 	}
-#endif
       }
     }
   }
