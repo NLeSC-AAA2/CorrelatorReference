@@ -16,7 +16,7 @@ endif
 WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wno-unknown-pragmas -std=c++17
 
 ifeq ($(CXX), clang++)
-    WARNINGS+=-Wno-unused-parameter
+    WARNINGS+=
     CFLAGS+=-isystem/cm/shared/apps/intel/composer_xe/2015.5.223/mkl/include/ \
             -stdlib=libc++
     LDFLAGS+=-stdlib=libc++

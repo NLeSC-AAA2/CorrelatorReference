@@ -25,6 +25,18 @@
 #else
 #define USE_FUSED_FILTER false
 #endif
+#ifdef DELAY_COMPENSATION
+#undef DELAY_COMPENSATION
+#define DELAY_COMPENSATION true
+#else
+#define DELAY_COMPENSATION false
+#endif
+#ifdef BANDPASS_CORRECTION
+#undef BANDPASS_CORRECTION
+#define BANDPASS_CORRECTION true
+#else
+#define BANDPASS_CORRECTION false
+#endif
 
 constexpr int NR_INPUTS = 2 * 576;
 constexpr int VECTOR_SIZE = 8;
@@ -32,9 +44,7 @@ constexpr int VECTOR_SIZE = 8;
 constexpr int NR_CHANNELS = 64;
 constexpr int NR_SAMPLES_PER_CHANNEL = 3072;
 constexpr uint64_t NR_SAMPLES = NR_INPUTS * NR_SAMPLES_PER_CHANNEL * NR_CHANNELS;
-#if defined DELAY_COMPENSATION
 constexpr float SUBBAND_BANDWIDTH = 195312.5f;
-#endif
 constexpr int NR_TAPS = 16;
 constexpr int NR_BASELINES = NR_INPUTS * (NR_INPUTS + 1) / 2;
 constexpr int NR_SAMPLES_PER_MINOR_LOOP = 64;
@@ -68,6 +78,8 @@ typedef float VisibilitiesType[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
 static bool correctness_test = true;
 static bool use_fused_filter = USE_FUSED_FILTER;
+static bool delay_compensation = DELAY_COMPENSATION;
+static bool bandpass_correction = BANDPASS_CORRECTION;
 
 static InputDataType inputData;
 static FilteredDataType filteredData;
@@ -306,9 +318,7 @@ static void
 transpose
 ( CorrectedDataType correctedData
 , const FilteredDataType filteredData
-#if defined BANDPASS_CORRECTION
 , const BandPassCorrectionWeights bandPassCorrectionWeights
-#endif
 , unsigned
 )
 {
@@ -323,11 +333,11 @@ transpose
                             unsigned input = inputMajor + inputMinor;
 
                             if (NR_INPUTS % VECTOR_SIZE == 0 || input < NR_INPUTS) {
-#if defined BANDPASS_CORRECTION
-                                correctedData[channel][inputMajor / VECTOR_SIZE][time][realImag][inputMinor] = bandPassCorrectionWeights[channel] * filteredData[input][time][realImag][channel];
-#else
-                                correctedData[channel][inputMajor / VECTOR_SIZE][time][realImag][inputMinor] = filteredData[input][time][realImag][channel];
-#endif
+                                if (bandpass_correction) {
+                                    correctedData[channel][inputMajor / VECTOR_SIZE][time][realImag][inputMinor] = bandPassCorrectionWeights[channel] * filteredData[input][time][realImag][channel];
+                                } else {
+                                    correctedData[channel][inputMajor / VECTOR_SIZE][time][realImag][inputMinor] = filteredData[input][time][realImag][channel];
+                                }
                             }
                         }
                     }
@@ -338,7 +348,6 @@ transpose
 }
 
 
-#if defined DELAY_COMPENSATION
 static void
 applyDelays
 ( CorrectedDataType correctedData
@@ -394,10 +403,8 @@ applyDelays
         }
     }
 }
-#endif
 
 
-#if defined BANDPASS_CORRECTION
 static void
 setBandPassTestPattern(BandPassCorrectionWeights bandPassCorrectionWeights)
 {
@@ -407,10 +414,8 @@ setBandPassTestPattern(BandPassCorrectionWeights bandPassCorrectionWeights)
     if (NR_CHANNELS > 5)
         bandPassCorrectionWeights[5] = 2;
 }
-#endif
 
 
-#if defined DELAY_COMPENSATION
 static void
 setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
 {
@@ -420,7 +425,6 @@ setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
     if (NR_INPUTS > 22)
         delaysAfterEnd[22] = 1e-6;
 }
-#endif
 
 
 static void
@@ -454,17 +458,16 @@ testTranspose()
 {
     setTransposeTestPattern(filteredData);
 
-#if defined BANDPASS_CORRECTION
-    setBandPassTestPattern(bandPassCorrectionWeights);
-    transpose(correctedData, filteredData, bandPassCorrectionWeights, 0);
-#else
-    transpose(correctedData, filteredData, 0);
-#endif
+    if (bandpass_correction) {
+        setBandPassTestPattern(bandPassCorrectionWeights);
+    }
 
-#if defined DELAY_COMPENSATION
-    setDelaysTestPattern(delaysAtBegin, delaysAfterEnd);
-    applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, 60e6, 0);
-#endif
+    transpose(correctedData, filteredData, bandPassCorrectionWeights, 0);
+
+    if (delay_compensation) {
+        setDelaysTestPattern(delaysAtBegin, delaysAfterEnd);
+        applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, 60e6, 0);
+    }
 
     checkTransposeTestPattern(correctedData);
 }
@@ -553,14 +556,11 @@ fused_FFT
 }
 
 
-#if defined DELAY_COMPENSATION
 static void
 fused_TransposeInit
 ( float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-#if defined BANDPASS_CORRECTION
 , const BandPassCorrectionWeights bandPassCorrectionWeights
-#endif
 , const DelaysType delaysAtBegin
 , const DelaysType delaysAfterEnd
 , float subbandFrequency
@@ -583,25 +583,22 @@ fused_TransposeInit
         sincosf(myPhiBegin, &v[IMAG][channel], &v[REAL][channel]);
         sincosf(myPhiDelta, &dv[IMAG][channel], &dv[REAL][channel]);
 
-#if defined BANDPASS_CORRECTION
-        v[REAL][channel] *= bandPassCorrectionWeights[channel];
-        v[IMAG][channel] *= bandPassCorrectionWeights[channel];
-#endif
+        if (bandpass_correction) {
+            v[REAL][channel] *= bandPassCorrectionWeights[channel];
+            v[IMAG][channel] *= bandPassCorrectionWeights[channel];
+        }
     }
 
     trsTime += rdtsc();
 }
-#endif
 
 
 static void
 fused_Transpose
 ( CorrectedDataType correctedData
 , float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-#if defined DELAY_COMPENSATION
 , float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-#endif
 , unsigned input
 , unsigned majorTime
 , unsigned
@@ -610,17 +607,17 @@ fused_Transpose
 {
     trsTime -= rdtsc();
 
-#if defined BANDPASS_CORRECTION && !defined DELAY_COMPENSATION
-    // BandPass correction, if not doing delay compensation
+    if (bandpass_correction && !delay_compensation) {
+        // BandPass correction, if not doing delay compensation
 
-    for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
-        for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-            for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
-                filteredData[minorTime][real_imag][channel] *= bandPassCorrectionWeights[channel];
+        for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
+            for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
+                for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
+                    filteredData[minorTime][real_imag][channel] *= bandPassCorrectionWeights[channel];
+                }
             }
         }
     }
-#endif
 
     // Delay compensation & transpose
 
@@ -629,10 +626,10 @@ fused_Transpose
             float sample_r = filteredData[minorTime][REAL][channel];
             float sample_i = filteredData[minorTime][IMAG][channel];
 
-#if defined DELAY_COMPENSATION
-            cmul(sample_r, sample_i, sample_r, sample_i, v[REAL][channel], v[IMAG][channel]);
-            cmul(v[REAL][channel], v[IMAG][channel], v[REAL][channel], v[IMAG][channel], dv[REAL][channel], dv[IMAG][channel]);
-#endif
+            if (delay_compensation) {
+                cmul(sample_r, sample_i, sample_r, sample_i, v[REAL][channel], v[IMAG][channel]);
+                cmul(v[REAL][channel], v[IMAG][channel], v[REAL][channel], v[IMAG][channel], dv[REAL][channel], dv[IMAG][channel]);
+            }
 
             correctedData[channel][input / VECTOR_SIZE][majorTime + minorTime][REAL][input % VECTOR_SIZE] = sample_r;
             correctedData[channel][input / VECTOR_SIZE][majorTime + minorTime][IMAG][input % VECTOR_SIZE] = sample_i;
@@ -648,14 +645,10 @@ fused
 ( CorrectedDataType correctedData
 , const InputDataType inputData
 , const FilterWeightsType
-#if defined DELAY_COMPENSATION
-#if defined BANDPASS_CORRECTION
 , const BandPassCorrectionWeights bandPassCorrectionWeights
-#endif
 , const DelaysType delaysAtBegin
 , const DelaysType delaysAfterEnd
 , float subbandFrequency
-#endif
 , unsigned iteration
 , double &FIRfilterTimeRef
 , double &FFTtimeRef
@@ -671,25 +664,21 @@ fused
             float history[COMPLEX][NR_TAPS][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
             float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
 
-#if defined DELAY_COMPENSATION
             float v[COMPLEX][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
             float dv[COMPLEX][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
+            if (delay_compensation) {
+                fused_TransposeInit(v, dv,
+                        bandPassCorrectionWeights,
+                        delaysAtBegin, delaysAfterEnd, subbandFrequency, input, iteration, trsTime);
+            }
 
-            fused_TransposeInit(v, dv,
-#if defined BANDPASS_CORRECTION
-                    bandPassCorrectionWeights,
-#endif
-                    delaysAtBegin, delaysAfterEnd, subbandFrequency, input, iteration, trsTime);
-#endif
             fused_FIRfilterInit(inputData, history, input, iteration, FIRfilterTime);
 
             for (unsigned majorTime = 0; majorTime < NR_SAMPLES_PER_CHANNEL; majorTime += NR_SAMPLES_PER_MINOR_LOOP) {
                 fused_FIRfilter(inputData, history, filteredData, input, majorTime, iteration, FIRfilterTime);
                 fused_FFT(filteredData, iteration, FFTtime);
                 fused_Transpose(correctedData, filteredData,
-#if defined DELAY_COMPENSATION
                         v, dv,
-#endif
                         input, majorTime, iteration, trsTime);
             }
         }
@@ -755,12 +744,8 @@ testFused()
 
     fused(
             correctedData, inputData, filterWeights,
-#if defined DELAY_COMPENSATION
-#if defined BANDPASS_CORRECTION
             bandPassCorrectionWeights,
-#endif
             delaysAtBegin, delaysAfterEnd, 60e6,
-#endif
             0, FIRfilterTime, FFTtime, trsTime
          );
 
@@ -867,11 +852,7 @@ report
 
 
 static void
-pipeline(
-#if defined DELAY_COMPENSATION
-float subbandFrequency,
-#endif
-unsigned iteration)
+pipeline(float subbandFrequency, unsigned iteration)
 {
     double powerStates[8];
     double fusedTime, FIRfilterTime, FFTtime, trsTime;
@@ -890,25 +871,17 @@ unsigned iteration)
 
             powerStates[3] = omp_get_wtime();
 
-#if defined BANDPASS_CORRECTION
             transpose(correctedData, filteredData, bandPassCorrectionWeights, iteration);
-#else
-            transpose(correctedData, filteredData, iteration);
-#endif
 
             powerStates[4] = omp_get_wtime();
 
-#if defined DELAY_COMPENSATION
-            applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency, iteration);
-#endif
+            if (delay_compensation) {
+                applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency, iteration);
+            }
         } else {
             fused(correctedData, inputData, filterWeights,
-#if defined DELAY_COMPENSATION
-#if defined BANDPASS_CORRECTION
                     bandPassCorrectionWeights,
-#endif
                     delaysAtBegin, delaysAfterEnd, subbandFrequency,
-#endif
                     iteration, FIRfilterTime, FFTtime, trsTime);
         }
 
@@ -925,13 +898,12 @@ unsigned iteration)
         uint64_t nrFIRfilterOperations = NR_SAMPLES * COMPLEX * NR_TAPS * 2;
         uint64_t nrFFToperations       = static_cast<uint64_t>(NR_SAMPLES * 5 * log2(NR_CHANNELS));
 
-#if defined DELAY_COMPENSATION
-        uint64_t nrDelayAndBandPassOperations = NR_SAMPLES * 2 * 6;
-#elif defined BANDPASS_CORRECTION
-        uint64_t nrDelayAndBandPassOperations = NR_SAMPLES * COMPLEX;
-#else
         uint64_t nrDelayAndBandPassOperations = 0;
-#endif
+        if (delay_compensation) {
+            nrDelayAndBandPassOperations = NR_SAMPLES * 2 * 6;
+        } else if (bandpass_correction) {
+            nrDelayAndBandPassOperations = NR_SAMPLES * COMPLEX;
+        }
 
         uint64_t nrCorrelatorOperations = (uint64_t) NR_INPUTS * NR_INPUTS / 2 * 8ULL * NR_CHANNELS * NR_SAMPLES_PER_CHANNEL;
         uint64_t nrFusedOperations = nrFIRfilterOperations + nrFFToperations + nrDelayAndBandPassOperations;
@@ -941,11 +913,11 @@ unsigned iteration)
         if (!use_fused_filter) {
             report("FIR", nrFIRfilterOperations, sizeof(InputDataType) + sizeof(FilteredDataType), powerStates[1], powerStates[2]);
             report("FFT", nrFFToperations, 2 * sizeof(FilteredDataType), powerStates[2], powerStates[3]);
-#if defined BANDPASS_CORRECTION
-            report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
-#else
-            report("trs", 0, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
-#endif
+            if (bandpass_correction) {
+                report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
+            } else {
+                report("trs", 0, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
+            }
             report("del", NR_SAMPLES * 2 * 6, 2 * sizeof(CorrectedDataType), powerStates[4], powerStates[5]);
         } else {
             report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5], (double) FIRfilterTime / fusedTime);
@@ -978,15 +950,11 @@ int main(int, char **)
 
     omp_set_nested(1);
 
-#if defined BANDPASS_CORRECTION
     setBandPassTestPattern(bandPassCorrectionWeights);
-#endif
 
     {
         setInputTestPattern(inputData);
-#if defined DELAY_COMPENSATION
         setDelaysTestPattern(delaysAtBegin, delaysAfterEnd);
-#endif
 
         setFilterWeightsTestPattern(filterWeights);
 
@@ -998,11 +966,7 @@ int main(int, char **)
                 startState = omp_get_wtime();
             }
 
-            pipeline(
-#if defined DELAY_COMPENSATION
-                    60e6,
-#endif
-                    i);
+            pipeline(60e6, i);
         }
     }
     cout << std::endl;
