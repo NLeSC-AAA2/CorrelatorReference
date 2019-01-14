@@ -132,7 +132,6 @@ filter
 {
 #pragma omp parallel
     {
-#if 1
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
             float history[COMPLEX][NR_TAPS][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
@@ -157,23 +156,6 @@ filter
                 }
             }
         }
-#else
-#pragma omp for collapse(2) schedule(dynamic)
-        for (int real_imag = 0; real_imag < COMPLEX; real_imag ++) {
-            for (int input = 0; input < NR_INPUTS; input ++) {
-                for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                    for (int channel = 0; channel < NR_CHANNELS; channel ++) {
-                        float sum = 0;
-
-                        for (int tap = 0; tap < NR_TAPS; tap ++)
-                            sum += filterWeights[tap][channel] * inputData[input][real_imag][time + tap][channel];
-
-                        filteredData[input][time][real_imag][channel] = sum;
-                    }
-                }
-            }
-        }
-#endif
     }
 }
 
