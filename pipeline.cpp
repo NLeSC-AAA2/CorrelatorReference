@@ -54,9 +54,6 @@ constexpr int COMPLEX = 2;
 
 using std::cout, std::cerr;
 
-constexpr int ALIGN(int N, int A)
-{ return ((N+A-1)/A)*A; }
-
 static inline double
 rdtsc()
 {
@@ -68,11 +65,11 @@ rdtsc()
 
 
 typedef int8_t InputDataType[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS] __attribute__((aligned(16)));
-typedef float FilteredDataType[ALIGN(NR_INPUTS, VECTOR_SIZE)][NR_SAMPLES_PER_CHANNEL][COMPLEX][NR_CHANNELS] __attribute__((aligned(64)));
+typedef float FilteredDataType[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][COMPLEX][NR_CHANNELS] __attribute__((aligned(64)));
 typedef float FilterWeightsType[NR_TAPS][NR_CHANNELS] __attribute__((aligned(64)));
 typedef float BandPassCorrectionWeights[NR_CHANNELS] __attribute__((aligned(64)));
 typedef double DelaysType[NR_INPUTS];
-typedef float CorrectedDataType[NR_CHANNELS][ALIGN(NR_INPUTS, VECTOR_SIZE) / VECTOR_SIZE][NR_SAMPLES_PER_CHANNEL][COMPLEX][VECTOR_SIZE] __attribute__((aligned(64)));
+typedef float CorrectedDataType[NR_CHANNELS][NR_INPUTS / VECTOR_SIZE][NR_SAMPLES_PER_CHANNEL][COMPLEX][VECTOR_SIZE] __attribute__((aligned(64)));
 typedef float VisibilitiesType[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
 static bool correctness_test = true;
@@ -307,7 +304,7 @@ transpose
     {
 #pragma omp for schedule(dynamic)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-            for (unsigned inputMajor = 0; inputMajor < ALIGN(NR_INPUTS, VECTOR_SIZE); inputMajor += VECTOR_SIZE) {
+            for (unsigned inputMajor = 0; inputMajor < NR_INPUTS; inputMajor += VECTOR_SIZE) {
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
                     for (unsigned realImag = 0; realImag < COMPLEX; realImag ++) {
                         for (unsigned inputMinor = 0; inputMinor < VECTOR_SIZE; inputMinor ++) {
@@ -341,7 +338,7 @@ applyDelays
 #pragma omp parallel
     {
 #pragma omp for collapse(2)
-        for (unsigned inputMajor = 0; inputMajor < ALIGN(NR_INPUTS, VECTOR_SIZE) / VECTOR_SIZE; inputMajor ++) {
+        for (unsigned inputMajor = 0; inputMajor < NR_INPUTS / VECTOR_SIZE; inputMajor ++) {
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
                 float v_rf[VECTOR_SIZE] __attribute__((aligned(sizeof (float[VECTOR_SIZE]))));
                 float v_if[VECTOR_SIZE] __attribute__((aligned(sizeof (float[VECTOR_SIZE]))));
