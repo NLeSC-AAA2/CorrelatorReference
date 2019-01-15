@@ -113,7 +113,7 @@ setFilterWeightsTestPattern(FilterWeightsType& filterWeights)
 
 
 static void
-filter
+FIR_filter
 ( FilteredDataType& filteredData
 , const InputDataType& inputData
 , const FilterWeightsType& filterWeights
@@ -148,16 +148,6 @@ filter
         }
     }
 }
-
-
-static void
-FIR_filter
-( FilteredDataType& filteredData
-, const InputDataType& inputData
-, const FilterWeightsType& filterWeights
-, unsigned iteration
-)
-{ filter(filteredData, inputData, filterWeights, iteration); }
 
 
 static void
@@ -854,7 +844,7 @@ pipeline
         powerStates[1] = omp_get_wtime();
 
         if (!use_fused_filter) {
-            filter(filteredData, inputData, filterWeights, iteration);
+            FIR_filter(filteredData, inputData, filterWeights, iteration);
 
             powerStates[2] = omp_get_wtime();
 
