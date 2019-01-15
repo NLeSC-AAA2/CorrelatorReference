@@ -67,12 +67,19 @@ rdtsc()
 
 
 typedef boost::multi_array<int8_t, 4> InputDataType;
+static const auto InputDataDims = boost::extents[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS];
 typedef boost::multi_array<float, 4> FilteredDataType;
+static const auto FilteredDataDims = boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][COMPLEX][NR_CHANNELS];
 typedef boost::multi_array<float, 2> FilterWeightsType;
+static const auto FilterWeightsDims = boost::extents[NR_TAPS][NR_CHANNELS];
 typedef boost::multi_array<float, 1> BandPassCorrectionWeights;
+static const auto BandPassCorrectionWeightsDims = boost::extents[NR_CHANNELS];
 typedef boost::multi_array<double, 1> DelaysType;
+static const auto DelaysDims = boost::extents[NR_INPUTS];
 typedef boost::multi_array<float, 5> CorrectedDataType;
+static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS / VECTOR_SIZE][NR_SAMPLES_PER_CHANNEL][COMPLEX][VECTOR_SIZE];
 typedef boost::multi_array<float, 3> VisibilitiesType;
+static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
 static bool correctness_test = true;
 static bool use_fused_filter = USE_FUSED_FILTER;
@@ -916,13 +923,14 @@ int main(int, char **)
 {
     static_assert(NR_CHANNELS % 16 == 0);
     static_assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);
-    InputDataType inputData(boost::extents[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS]);
-    FilteredDataType filteredData(boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][COMPLEX][NR_CHANNELS]);
-    FilterWeightsType filterWeights(boost::extents[NR_TAPS][NR_CHANNELS]);
-    BandPassCorrectionWeights bandPassCorrectionWeights(boost::extents[NR_CHANNELS]);
-    DelaysType delaysAtBegin(boost::extents[NR_INPUTS]), delaysAfterEnd(boost::extents[NR_INPUTS]);
-    CorrectedDataType correctedData(boost::extents[NR_CHANNELS][NR_INPUTS / VECTOR_SIZE][NR_SAMPLES_PER_CHANNEL][COMPLEX][VECTOR_SIZE]);
-    VisibilitiesType visibilities(boost::extents[NR_CHANNELS][COMPLEX][NR_BASELINES]);
+
+    InputDataType inputData(InputDataDims);
+    FilteredDataType filteredData(FilteredDataDims);
+    FilterWeightsType filterWeights(FilterWeightsDims);
+    BandPassCorrectionWeights bandPassCorrectionWeights(BandPassCorrectionWeightsDims);
+    DelaysType delaysAtBegin(DelaysDims), delaysAfterEnd(DelaysDims);
+    CorrectedDataType correctedData(CorrectedDataDims);
+    VisibilitiesType visibilities(VisibilitiesDims);
 
     double startState = 0.0;
     double stopState;
