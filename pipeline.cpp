@@ -158,20 +158,6 @@ filter
 
 
 static void
-copyInputData()
-{
-    if (!correctness_test) {
-        double start_time = omp_get_wtime();
-        double copy_time = omp_get_wtime() - start_time;
-
-#pragma omp critical (cout)
-        cout << "input data: time = " << copy_time << "s (total), " << "BW = "
-             << sizeof(InputDataType) / copy_time / 1e9 << " GB/s" << std::endl;
-    }
-}
-
-
-static void
 FIR_filter(unsigned iteration)
 {
     filter(filteredData, inputData, filterWeights, iteration);
@@ -200,7 +186,6 @@ testFIR_Filter()
     setInputTestPattern(inputData);
     setFilterWeightsTestPattern(filterWeights);
 
-    copyInputData();
     FIR_filter(0);
 
     checkFIR_FilterTestPattern(filteredData);
