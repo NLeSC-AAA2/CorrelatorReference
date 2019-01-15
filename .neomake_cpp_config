@@ -3,3 +3,5 @@
 -isystem/cm/shared/apps/intel/composer_xe/2015.5.223/mkl/include/
 -Wno-shadow
 -Wno-disabled-macro-expansion
+-Wno-exit-time-destructors
+-Wno-global-constructors

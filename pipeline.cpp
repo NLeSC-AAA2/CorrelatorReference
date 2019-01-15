@@ -19,6 +19,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <boost/multi_array.hpp>
+
 #ifdef USE_FUSED_FILTER
 #undef USE_FUSED_FILTER
 #define USE_FUSED_FILTER true
@@ -64,33 +66,33 @@ rdtsc()
 }
 
 
-typedef int8_t InputDataType[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS] __attribute__((aligned(16)));
-typedef float FilteredDataType[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][COMPLEX][NR_CHANNELS] __attribute__((aligned(64)));
-typedef float FilterWeightsType[NR_TAPS][NR_CHANNELS] __attribute__((aligned(64)));
-typedef float BandPassCorrectionWeights[NR_CHANNELS] __attribute__((aligned(64)));
-typedef double DelaysType[NR_INPUTS];
-typedef float CorrectedDataType[NR_CHANNELS][NR_INPUTS / VECTOR_SIZE][NR_SAMPLES_PER_CHANNEL][COMPLEX][VECTOR_SIZE] __attribute__((aligned(64)));
-typedef float VisibilitiesType[NR_CHANNELS][COMPLEX][NR_BASELINES];
+typedef boost::multi_array<int8_t, 4> InputDataType;
+typedef boost::multi_array<float, 4> FilteredDataType;
+typedef boost::multi_array<float, 2> FilterWeightsType;
+typedef boost::multi_array<float, 1> BandPassCorrectionWeights;
+typedef boost::multi_array<double, 1> DelaysType;
+typedef boost::multi_array<float, 5> CorrectedDataType;
+typedef boost::multi_array<float, 3> VisibilitiesType;
 
 static bool correctness_test = true;
 static bool use_fused_filter = USE_FUSED_FILTER;
 static bool delay_compensation = DELAY_COMPENSATION;
 static bool bandpass_correction = BANDPASS_CORRECTION;
 
-static InputDataType inputData;
-static FilteredDataType filteredData;
-static FilterWeightsType filterWeights;
-static BandPassCorrectionWeights bandPassCorrectionWeights;
-static DelaysType delaysAtBegin, delaysAfterEnd;
-static CorrectedDataType correctedData;
-static VisibilitiesType visibilities;
+static InputDataType inputData(boost::extents[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS]);
+static FilteredDataType filteredData(boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][COMPLEX][NR_CHANNELS]);
+static FilterWeightsType filterWeights(boost::extents[NR_TAPS][NR_CHANNELS]);
+static BandPassCorrectionWeights bandPassCorrectionWeights(boost::extents[NR_CHANNELS]);
+static DelaysType delaysAtBegin(boost::extents[NR_INPUTS]), delaysAfterEnd(boost::extents[NR_INPUTS]);
+static CorrectedDataType correctedData(boost::extents[NR_CHANNELS][NR_INPUTS / VECTOR_SIZE][NR_SAMPLES_PER_CHANNEL][COMPLEX][VECTOR_SIZE]);
+static VisibilitiesType visibilities(boost::extents[NR_CHANNELS][COMPLEX][NR_BASELINES]);
 static uint64_t totalNrOperations;
 
 
 ////// FIR filter
 
 static void
-setInputTestPattern(InputDataType inputData)
+setInputTestPattern(InputDataType& inputData)
 {
     signed char count = 64;
 
@@ -108,22 +110,22 @@ setInputTestPattern(InputDataType inputData)
 
 
 static void
-setFilterWeightsTestPattern(FilterWeightsType filterWeights)
+setFilterWeightsTestPattern(FilterWeightsType& filterWeights)
 {
-  memset(filterWeights, 0, sizeof(FilterWeightsType));
+    std::fill_n(filterWeights.data(), filterWeights.num_elements(), 0.0f);
 
-  if (NR_TAPS > 4 && NR_CHANNELS > 12) {
-    filterWeights[15][12] = 2;
-    filterWeights[14][12] = 3;
-  }
+    if (NR_TAPS > 4 && NR_CHANNELS > 12) {
+        filterWeights[15][12] = 2;
+        filterWeights[14][12] = 3;
+    }
 }
 
 
 static void
 filter
-( FilteredDataType filteredData
-, const InputDataType inputData
-, const FilterWeightsType filterWeights
+( FilteredDataType& filteredData
+, const InputDataType& inputData
+, const FilterWeightsType& filterWeights
 , unsigned
 )
 {
@@ -165,7 +167,7 @@ FIR_filter(unsigned iteration)
 
 
 static void
-checkFIR_FilterTestPattern(const FilteredDataType filteredData)
+checkFIR_FilterTestPattern(const FilteredDataType& filteredData)
 {
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
@@ -261,7 +263,7 @@ fftDestroy()
 
 
 static void
-FFT(FilteredDataType filteredData, unsigned)
+FFT(FilteredDataType& filteredData, unsigned)
 {
 #pragma omp parallel
     {
@@ -270,7 +272,7 @@ FFT(FilteredDataType filteredData, unsigned)
             //      for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             //    DftiComputeForward(handle, filteredData[input][time][REAL], filteredData[input][time][IMAG]);
             for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time += NR_SAMPLES_PER_MINOR_LOOP)
-                DftiComputeForward(handle, filteredData[input][time][REAL], filteredData[input][time][IMAG]);
+                DftiComputeForward(handle, filteredData[input][time][REAL].origin(), filteredData[input][time][IMAG].origin());
     }
 }
 
@@ -279,9 +281,9 @@ FFT(FilteredDataType filteredData, unsigned)
 
 static void
 transpose
-( CorrectedDataType correctedData
-, const FilteredDataType filteredData
-, const BandPassCorrectionWeights bandPassCorrectionWeights
+( CorrectedDataType& correctedData
+, const FilteredDataType& filteredData
+, const BandPassCorrectionWeights& bandPassCorrectionWeights
 , unsigned
 )
 {
@@ -313,9 +315,9 @@ transpose
 
 static void
 applyDelays
-( CorrectedDataType correctedData
-, const DelaysType delaysAtBegin
-, const DelaysType delaysAfterEnd
+( CorrectedDataType& correctedData
+, const DelaysType& delaysAtBegin
+, const DelaysType& delaysAfterEnd
 , double subbandFrequency
 , unsigned
 )
@@ -369,10 +371,9 @@ applyDelays
 
 
 static void
-setBandPassTestPattern(BandPassCorrectionWeights bandPassCorrectionWeights)
+setBandPassTestPattern(BandPassCorrectionWeights& bandPassCorrectionWeights)
 {
-    for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-        bandPassCorrectionWeights[channel] = 1;
+    std::fill_n(bandPassCorrectionWeights.data(), bandPassCorrectionWeights.num_elements(), 1);
 
     if (NR_CHANNELS > 5)
         bandPassCorrectionWeights[5] = 2;
@@ -380,10 +381,10 @@ setBandPassTestPattern(BandPassCorrectionWeights bandPassCorrectionWeights)
 
 
 static void
-setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
+setDelaysTestPattern(DelaysType& delaysAtBegin, DelaysType& delaysAfterEnd)
 {
-    memset(delaysAtBegin, 0, sizeof(DelaysType));
-    memset(delaysAfterEnd, 0, sizeof(DelaysType));
+    std::fill_n(delaysAtBegin.data(), delaysAtBegin.num_elements(), 0);
+    std::fill_n(delaysAfterEnd.data(), delaysAfterEnd.num_elements(), 0);
 
     if (NR_INPUTS > 22)
         delaysAfterEnd[22] = 1e-6;
@@ -391,7 +392,7 @@ setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
 
 
 static void
-setTransposeTestPattern(FilteredDataType filteredData)
+setTransposeTestPattern(FilteredDataType& filteredData)
 {
     if (NR_INPUTS > 22 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 5) {
         filteredData[22][99][REAL][5] = 2;
@@ -401,7 +402,7 @@ setTransposeTestPattern(FilteredDataType filteredData)
 
 
 static void
-checkTransposeTestPattern(const CorrectedDataType correctedData)
+checkTransposeTestPattern(const CorrectedDataType& correctedData)
 {
     for (int channel = 0; channel < NR_CHANNELS; channel ++)
         for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
@@ -449,7 +450,7 @@ cmul(T &c_r, T &c_i, T a_r, T a_i, T b_r, T b_i)
 
 static void
 fused_FIRfilterInit
-( const InputDataType inputData
+( const InputDataType& inputData
 , float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , unsigned input
 , unsigned
@@ -470,7 +471,7 @@ fused_FIRfilterInit
 
 static void
 fused_FIRfilter
-( const InputDataType inputData
+( const InputDataType& inputData
 , float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , unsigned input
@@ -523,9 +524,9 @@ static void
 fused_TransposeInit
 ( float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-, const BandPassCorrectionWeights bandPassCorrectionWeights
-, const DelaysType delaysAtBegin
-, const DelaysType delaysAfterEnd
+, const BandPassCorrectionWeights& bandPassCorrectionWeights
+, const DelaysType& delaysAtBegin
+, const DelaysType& delaysAfterEnd
 , double subbandFrequency
 , unsigned input
 , unsigned
@@ -558,7 +559,7 @@ fused_TransposeInit
 
 static void
 fused_Transpose
-( CorrectedDataType correctedData
+( CorrectedDataType& correctedData
 , float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
@@ -605,12 +606,12 @@ fused_Transpose
 
 static void
 fused
-( CorrectedDataType correctedData
-, const InputDataType inputData
-, const FilterWeightsType
-, const BandPassCorrectionWeights bandPassCorrectionWeights
-, const DelaysType delaysAtBegin
-, const DelaysType delaysAfterEnd
+( CorrectedDataType& correctedData
+, const InputDataType& inputData
+, const FilterWeightsType&
+, const BandPassCorrectionWeights& bandPassCorrectionWeights
+, const DelaysType& delaysAtBegin
+, const DelaysType& delaysAfterEnd
 , double subbandFrequency
 , unsigned iteration
 , double &FIRfilterTimeRef
@@ -657,21 +658,20 @@ fused
 
 static void
 setFusedTestPattern
-( InputDataType inputData
-, FilterWeightsType filterWeights
-, BandPassCorrectionWeights bandPassCorrectionWeights
-, DelaysType delaysAtBegin
-, DelaysType delaysAfterEnd
+( InputDataType& inputData
+, FilterWeightsType& filterWeights
+, BandPassCorrectionWeights& bandPassCorrectionWeights
+, DelaysType& delaysAtBegin
+, DelaysType& delaysAfterEnd
 )
 {
-    memset(inputData, 0, sizeof(InputDataType));
-    memset(filterWeights, 0, sizeof(FilterWeightsType));
+    std::fill_n(inputData.data(), inputData.num_elements(), 0);
+    std::fill_n(filterWeights.data(), filterWeights.num_elements(), 0.0f);
 
-    memset(delaysAtBegin, 0, sizeof(DelaysType));
-    memset(delaysAfterEnd, 0, sizeof(DelaysType));
+    std::fill_n(delaysAtBegin.data(), delaysAtBegin.num_elements(), 0);
+    std::fill_n(delaysAfterEnd.data(), delaysAfterEnd.num_elements(), 0);
 
-    for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-        bandPassCorrectionWeights[channel] = 1;
+    std::fill_n(bandPassCorrectionWeights.data(), bandPassCorrectionWeights.num_elements(), 1);
 
     if (NR_TAPS > 11 && NR_CHANNELS > 12)
         filterWeights[15][12] = 2;
@@ -684,7 +684,7 @@ setFusedTestPattern
 
 
 static void
-checkFusedTestPattern(const CorrectedDataType correctedData)
+checkFusedTestPattern(const CorrectedDataType& correctedData)
 {
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
@@ -721,11 +721,12 @@ testFused()
 
 static void
 correlate
-( VisibilitiesType visibilities
-, const CorrectedDataType correctedData
+( VisibilitiesType& visibilities
+, const CorrectedDataType& correctedData
 , unsigned
 )
 {
+    std::fill_n(visibilities.data(), visibilities.num_elements(), 0.0f);
 #pragma omp parallel
     {
 #pragma omp for collapse(2) schedule(dynamic,16)
@@ -757,7 +758,7 @@ correlate
 
 
 static void
-setCorrelatorTestPattern(CorrectedDataType correctedData)
+setCorrelatorTestPattern(CorrectedDataType& correctedData)
 {
     if constexpr (NR_CHANNELS > 5 && NR_SAMPLES_PER_CHANNEL > 99 && NR_INPUTS > 19) {
         correctedData[5][ 0 / VECTOR_SIZE][99][REAL][ 0 % VECTOR_SIZE] = 3;
@@ -769,7 +770,7 @@ setCorrelatorTestPattern(CorrectedDataType correctedData)
 
 
 static void
-checkCorrelatorTestPattern(const VisibilitiesType visibilities)
+checkCorrelatorTestPattern(const VisibilitiesType& visibilities)
 {
     for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
         for (unsigned baseline = 0; baseline < NR_BASELINES; baseline ++)

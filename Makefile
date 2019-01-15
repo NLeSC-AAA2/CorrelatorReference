@@ -17,7 +17,7 @@ WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wno-unknown-pragmas -std=c++1
 
 ifeq ($(CXX), clang++)
     WARNINGS+=-Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic \
-	      -Wno-shadow -Wno-disabled-macro-expansion
+	      -Wno-shadow -Wno-disabled-macro-expansion -Wno-global-constructors -Wno-exit-time-destructors
     CFLAGS+=-isystem/cm/shared/apps/intel/composer_xe/2015.5.223/mkl/include/ \
             -stdlib=libc++
     LDFLAGS+=-stdlib=libc++
@@ -51,7 +51,7 @@ pipeline-%.o: CFLAGS+=$(call if-contains,$*,fused,-DUSE_FUSED_FILTER) \
 
 pipeline-%.o: pipeline.cpp
 	$(PRINTF) " CC $<\n"
-	$(AT)$(CXX) $(CFLAGS) -mcmodel=large -fopenmp -g -O3 -c -o $@ $<
+	$(AT)$(CXX) $(CFLAGS) -fopenmp -g -O3 -c -o $@ $<
 
 pipeline-%: pipeline-%.o
 	$(PRINTF) " LD $@\n"
