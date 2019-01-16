@@ -70,6 +70,13 @@ static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS / VE
 typedef boost::multi_array<float, 3> VisibilitiesType;
 static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
+typedef boost::multi_array<float, 3> HistoryType;
+static const auto HistoryDims = boost::extents[COMPLEX][NR_TAPS][NR_CHANNELS];
+typedef boost::multi_array<float, 3> FusedFilterType;
+static const auto FusedFilterDims = boost::extents[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS];
+typedef boost::multi_array<float, 2> ComplexChannelType;
+static const auto ComplexChannelDims = boost::extents[COMPLEX][NR_CHANNELS];
+
 static bool use_fused_filter = USE_FUSED_FILTER;
 static bool delay_compensation = DELAY_COMPENSATION;
 static bool bandpass_correction = BANDPASS_CORRECTION;
@@ -132,7 +139,7 @@ FIR_filter
     {
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
-            float history[COMPLEX][NR_TAPS][NR_CHANNELS];
+            HistoryType history(HistoryDims);
 
             for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++)
                 for (unsigned time = 0; time < NR_TAPS - 1; time ++)
@@ -442,7 +449,7 @@ cmul(T &c_r, T &c_i, T a_r, T a_i, T b_r, T b_i)
 static void
 fused_FIRfilterInit
 ( const InputDataType& inputData
-, float history[COMPLEX][NR_TAPS][NR_CHANNELS]
+, HistoryType& history
 , unsigned input
 )
 {
@@ -459,8 +466,8 @@ static void
 fused_FIRfilter
 ( const InputDataType& inputData
 , const FilterWeightsType& filterWeights
-, float history[COMPLEX][NR_TAPS][NR_CHANNELS]
-, float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS]
+, HistoryType& history
+, FusedFilterType& filteredData
 , unsigned input
 , unsigned majorTime
 )
@@ -484,21 +491,19 @@ fused_FIRfilter
 
 
 static void
-fused_FFT
-( float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS]
-)
+fused_FFT(FusedFilterType& filteredData)
 {
     //  for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++)
     //  DftiComputeForward(handle, filteredData[minorTime][REAL], filteredData[minorTime][IMAG]);
     // Do batch FFT instead of for-loop
-    DftiComputeForward(handle, filteredData[0][REAL], filteredData[0][IMAG]);
+    DftiComputeForward(handle, filteredData[0][REAL].origin(), filteredData[0][IMAG].origin());
 }
 
 
 static void
 fused_TransposeInit
-( float v[COMPLEX][NR_CHANNELS]
-, float dv[COMPLEX][NR_CHANNELS]
+( ComplexChannelType& v
+, ComplexChannelType& dv
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
 , const DelaysType& delaysAtBegin
 , const DelaysType& delaysAfterEnd
@@ -530,9 +535,9 @@ static void
 fused_Transpose
 ( CorrectedDataType& correctedData
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
-, float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS]
-, float v[COMPLEX][NR_CHANNELS]
-, float dv[COMPLEX][NR_CHANNELS]
+, FusedFilterType& filteredData
+, ComplexChannelType& v
+, ComplexChannelType& dv
 , unsigned input
 , unsigned majorTime
 )
@@ -583,11 +588,12 @@ fused
     {
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
-            float history[COMPLEX][NR_TAPS][NR_CHANNELS];
-            float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS];
+            HistoryType history(HistoryDims);
+            FusedFilterType filteredData(FusedFilterDims);
 
-            float v[COMPLEX][NR_CHANNELS];
-            float dv[COMPLEX][NR_CHANNELS];
+            ComplexChannelType v(ComplexChannelDims);
+            ComplexChannelType dv(ComplexChannelDims);
+
             if (delay_compensation) {
                 fused_TransposeInit(v, dv,
                         bandPassCorrectionWeights,
