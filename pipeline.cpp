@@ -766,14 +766,12 @@ report
 , double weight = 1
 )
 {
-    if (!correctness_test) {
-        double runTime = (stopState - startState) * weight;
+    double runTime = (stopState - startState) * weight;
 
-        cout << msg << ": " << runTime << " s, "
-             << static_cast<double>(nrOperations) * 1e-12 / runTime
-             << " TFLOPS, " << static_cast<double>(nrBytes) * 1e-9 / runTime
-             << " GB/s" << std::endl;
-    }
+    cout << msg << ": " << runTime << " s, "
+         << static_cast<double>(nrOperations) * 1e-12 / runTime
+         << " TFLOPS, " << static_cast<double>(nrBytes) * 1e-9 / runTime
+         << " GB/s" << std::endl;
 }
 
 
@@ -843,23 +841,25 @@ pipeline
 
         totalNrOperations += nrFusedOperations + nrCorrelatorOperations; // is already atomic
 
-        if (!use_fused_filter) {
-            report("FIR", nrFIRfilterOperations, sizeof(InputDataType) + sizeof(FilteredDataType), powerStates[1], powerStates[2]);
-            report("FFT", nrFFToperations, 2 * sizeof(FilteredDataType), powerStates[2], powerStates[3]);
-            if (bandpass_correction) {
-                report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
+        if (!correctness_test){
+            if (!use_fused_filter) {
+                report("FIR", nrFIRfilterOperations, sizeof(InputDataType) + sizeof(FilteredDataType), powerStates[1], powerStates[2]);
+                report("FFT", nrFFToperations, 2 * sizeof(FilteredDataType), powerStates[2], powerStates[3]);
+                if (bandpass_correction) {
+                    report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
+                } else {
+                    report("trs", 0, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
+                }
+                report("del", NR_SAMPLES * 2 * 6, 2 * sizeof(CorrectedDataType), powerStates[4], powerStates[5]);
             } else {
-                report("trs", 0, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
+                report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5], FIRfilterTime / fusedTime);
+                report("FFT", nrFFToperations, 0, powerStates[1], powerStates[5],  FFTtime / fusedTime);
+                report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType), powerStates[1], powerStates[5], trsTime / fusedTime);
+                report("fused", nrFusedOperations, sizeof(InputDataType) + sizeof(CorrectedDataType), powerStates[1], powerStates[5]);
             }
-            report("del", NR_SAMPLES * 2 * 6, 2 * sizeof(CorrectedDataType), powerStates[4], powerStates[5]);
-        } else {
-            report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5], FIRfilterTime / fusedTime);
-            report("FFT", nrFFToperations, 0, powerStates[1], powerStates[5],  FFTtime / fusedTime);
-            report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType), powerStates[1], powerStates[5], trsTime / fusedTime);
-            report("fused", nrFusedOperations, sizeof(InputDataType) + sizeof(CorrectedDataType), powerStates[1], powerStates[5]);
-        }
 
-        report("cor", nrCorrelatorOperations, sizeof(CorrectedDataType) + sizeof(VisibilitiesType), powerStates[5], powerStates[6]);
+            report("cor", nrCorrelatorOperations, sizeof(CorrectedDataType) + sizeof(VisibilitiesType), powerStates[5], powerStates[6]);
+        }
     }
     return result;
 }
