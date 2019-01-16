@@ -268,7 +268,7 @@ fftDestroy()
 
 
 static void
-FFT(FilteredDataType& filteredData, unsigned)
+FFT(FilteredDataType& filteredData)
 {
 #pragma omp parallel
     {
@@ -288,7 +288,6 @@ static CorrectedDataType
 transpose
 ( const FilteredDataType& filteredData
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
-, unsigned
 )
 {
     CorrectedDataType correctedData(CorrectedDataDims);
@@ -326,7 +325,6 @@ applyDelays
 , const DelaysType& delaysAtBegin
 , const DelaysType& delaysAfterEnd
 , double subbandFrequency
-, unsigned
 )
 {
 #pragma omp parallel
@@ -432,10 +430,10 @@ testTranspose(FilteredDataType& filteredData)
         bandPassCorrectionWeights = bandPassTestPattern();
     }
 
-    auto correctedData = transpose(filteredData, bandPassCorrectionWeights, 0);
+    auto correctedData = transpose(filteredData, bandPassCorrectionWeights);
 
     if (delay_compensation) {
-        applyDelays(correctedData, delaysTestPattern(true), delaysTestPattern(false), 60e6, 0);
+        applyDelays(correctedData, delaysTestPattern(true), delaysTestPattern(false), 60e6);
     }
 
     checkTransposeTestPattern(correctedData);
@@ -459,7 +457,6 @@ fused_FIRfilterInit
 ( const InputDataType& inputData
 , float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , unsigned input
-, unsigned
 , double &FIRfilterTime
 )
 {
@@ -483,7 +480,6 @@ fused_FIRfilter
 , float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , unsigned input
 , unsigned majorTime
-, unsigned
 , double &FIRfilterTime
 )
 {
@@ -512,7 +508,6 @@ fused_FIRfilter
 static void
 fused_FFT
 ( float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-, unsigned
 , double &FFTtime
 )
 {
@@ -536,7 +531,6 @@ fused_TransposeInit
 , const DelaysType& delaysAfterEnd
 , double subbandFrequency
 , unsigned input
-, unsigned
 , double &trsTime
 )
 {
@@ -573,7 +567,6 @@ fused_Transpose
 , float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , unsigned input
 , unsigned majorTime
-, unsigned
 , double &trsTime
 )
 {
@@ -621,7 +614,6 @@ fused
 , const DelaysType& delaysAtBegin
 , const DelaysType& delaysAfterEnd
 , double subbandFrequency
-, unsigned iteration
 , double &FIRfilterTimeRef
 , double &FFTtimeRef
 , double &trsTimeRef
@@ -641,26 +633,24 @@ fused
             if (delay_compensation) {
                 fused_TransposeInit(v, dv,
                         bandPassCorrectionWeights,
-                        delaysAtBegin, delaysAfterEnd, subbandFrequency, input, iteration, trsTime);
+                        delaysAtBegin, delaysAfterEnd, subbandFrequency, input, trsTime);
             }
 
-            fused_FIRfilterInit(inputData, history, input, iteration, FIRfilterTime);
+            fused_FIRfilterInit(inputData, history, input, FIRfilterTime);
 
             for (unsigned majorTime = 0; majorTime < NR_SAMPLES_PER_CHANNEL; majorTime += NR_SAMPLES_PER_MINOR_LOOP) {
-                fused_FIRfilter(inputData, filterWeights, history, filteredData, input, majorTime, iteration, FIRfilterTime);
-                fused_FFT(filteredData, iteration, FFTtime);
+                fused_FIRfilter(inputData, filterWeights, history, filteredData, input, majorTime, FIRfilterTime);
+                fused_FFT(filteredData, FFTtime);
                 fused_Transpose(correctedData, bandPassCorrectionWeights, filteredData,
                         v, dv,
-                        input, majorTime, iteration, trsTime);
+                        input, majorTime, trsTime);
             }
         }
     }
 
-    if (iteration > 0) {
-        FIRfilterTimeRef = FIRfilterTime;
-        FFTtimeRef = FFTtime;
-        trsTimeRef = trsTime;
-    }
+    FIRfilterTimeRef = FIRfilterTime;
+    FFTtimeRef = FFTtime;
+    trsTimeRef = trsTime;
 }
 
 
@@ -690,7 +680,7 @@ testFused()
             correctedData, inputTestPattern(true), filterWeightsTestPattern(true),
             bandPassTestPattern(true),
             delaysTestPattern(true, true), delaysTestPattern(false, true), 60e6,
-            0, FIRfilterTime, FFTtime, trsTime
+            FIRfilterTime, FFTtime, trsTime
          );
 
     checkFusedTestPattern(correctedData);
@@ -701,7 +691,7 @@ testFused()
 ////// correlator
 
 static VisibilitiesType
-correlate(const CorrectedDataType& correctedData, unsigned)
+correlate(const CorrectedDataType& correctedData)
 {
     VisibilitiesType visibilities(VisibilitiesDims);
 #pragma omp parallel
@@ -760,7 +750,7 @@ testCorrelator(CorrectedDataType& correctedData)
         correctedData[5][18 / VECTOR_SIZE][99][IMAG][18 % VECTOR_SIZE] = 6;
     }
 
-    auto visibilities = correlate(correctedData, 0);
+    auto visibilities = correlate(correctedData);
 
     checkCorrelatorTestPattern(visibilities);
 }
@@ -790,7 +780,6 @@ report
 static VisibilitiesType
 pipeline
 ( double subbandFrequency
-, unsigned iteration
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
 , const DelaysType& delaysAtBegin
 , const DelaysType& delaysAfterEnd
@@ -812,32 +801,31 @@ pipeline
 
             powerStates[2] = omp_get_wtime();
 
-            FFT(filteredData, iteration);
+            FFT(filteredData);
 
             powerStates[3] = omp_get_wtime();
 
-            correctedData = transpose(filteredData, bandPassCorrectionWeights, iteration);
+            correctedData = transpose(filteredData, bandPassCorrectionWeights);
 
             powerStates[4] = omp_get_wtime();
 
             if (delay_compensation) {
-                applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency, iteration);
+                applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency);
             }
         } else {
             fused(correctedData, inputData, filterWeights,
                     bandPassCorrectionWeights,
                     delaysAtBegin, delaysAfterEnd, subbandFrequency,
-                    iteration, FIRfilterTime, FFTtime, trsTime);
+                    FIRfilterTime, FFTtime, trsTime);
         }
 
         powerStates[5] = omp_get_wtime();
 
-        result = correlate(correctedData, iteration);
+        result = correlate(correctedData);
 
         powerStates[6] = omp_get_wtime();
     }
 
-    if (iteration > 0) // do not count first iteration
 #pragma omp critical (cout)
     {
         uint64_t nrFIRfilterOperations = NR_SAMPLES * COMPLEX * NR_TAPS * 2;
@@ -906,13 +894,13 @@ int main(int, char **)
                 startState = omp_get_wtime();
             }
 
-            visibilities = pipeline(60e6, i, bandPassTestPattern(),
+            visibilities = pipeline(60e6, bandPassTestPattern(),
                     delaysTestPattern(true), delaysTestPattern(false), inputTestPattern(), filterWeightsTestPattern());
         }
+
         cout << std::endl;
         checkCorrelatorTestPattern(visibilities);
-
-  }
+    }
 
     if (!correctness_test) {
         stopState = omp_get_wtime();
