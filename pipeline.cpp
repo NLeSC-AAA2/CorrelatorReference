@@ -45,7 +45,6 @@ constexpr int VECTOR_SIZE = 8;
 
 constexpr int NR_CHANNELS = 64;
 constexpr int NR_SAMPLES_PER_CHANNEL = 3072;
-constexpr uint64_t NR_SAMPLES = NR_INPUTS * NR_SAMPLES_PER_CHANNEL * NR_CHANNELS;
 constexpr double SUBBAND_BANDWIDTH = 195312.5;
 constexpr int NR_TAPS = 16;
 constexpr int NR_BASELINES = NR_INPUTS * (NR_INPUTS + 1) / 2;
@@ -55,16 +54,6 @@ constexpr int IMAG = 1;
 constexpr int COMPLEX = 2;
 
 using std::cout, std::cerr;
-
-static inline double
-rdtsc()
-{
-  unsigned low, high;
-
-  __asm__ __volatile__ ("rdtsc" : "=a" (low), "=d" (high));
-  return static_cast<double>((static_cast<unsigned long long>(high) << 32) | low);
-}
-
 
 typedef boost::multi_array<int8_t, 4> InputDataType;
 static const auto InputDataDims = boost::extents[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS];
@@ -81,11 +70,9 @@ static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS / VE
 typedef boost::multi_array<float, 3> VisibilitiesType;
 static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
-static bool correctness_test = true;
 static bool use_fused_filter = USE_FUSED_FILTER;
 static bool delay_compensation = DELAY_COMPENSATION;
 static bool bandpass_correction = BANDPASS_CORRECTION;
-static uint64_t totalNrOperations;
 
 ////// FIR filter
 
@@ -457,18 +444,14 @@ fused_FIRfilterInit
 ( const InputDataType& inputData
 , float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , unsigned input
-, double &FIRfilterTime
 )
 {
-    FIRfilterTime -= rdtsc();
     // fill FIR filter history
 
     for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++)
         for (unsigned time = 0; time < NR_TAPS - 1; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
                 history[real_imag][time][channel] = inputData[input][real_imag][time][channel];
-
-    FIRfilterTime += rdtsc();
 }
 
 
@@ -480,11 +463,8 @@ fused_FIRfilter
 , float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , unsigned input
 , unsigned majorTime
-, double &FIRfilterTime
 )
 {
-    FIRfilterTime -= rdtsc();
-
     for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
         for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
             //#pragma vector aligned // why does specifying this yields wrong results ???
@@ -500,25 +480,18 @@ fused_FIRfilter
             }
         }
     }
-
-    FIRfilterTime += rdtsc();
 }
 
 
 static void
 fused_FFT
 ( float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-, double &FFTtime
 )
 {
-    FFTtime -= rdtsc();
-
     //  for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++)
     //  DftiComputeForward(handle, filteredData[minorTime][REAL], filteredData[minorTime][IMAG]);
     // Do batch FFT instead of for-loop
     DftiComputeForward(handle, filteredData[0][REAL], filteredData[0][IMAG]);
-
-    FFTtime += rdtsc();
 }
 
 
@@ -531,11 +504,8 @@ fused_TransposeInit
 , const DelaysType& delaysAfterEnd
 , double subbandFrequency
 , unsigned input
-, double &trsTime
 )
 {
-    trsTime -= rdtsc();
-
     // prepare delay compensation: compute complex weights
     double phiBegin = -2.0 * 3.141592653589793 * delaysAtBegin[input];
     double phiEnd   = -2.0 * 3.141592653589793 * delaysAfterEnd[input];
@@ -553,8 +523,6 @@ fused_TransposeInit
             v[IMAG][channel] *= bandPassCorrectionWeights[channel];
         }
     }
-
-    trsTime += rdtsc();
 }
 
 
@@ -567,11 +535,8 @@ fused_Transpose
 , float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
 , unsigned input
 , unsigned majorTime
-, double &trsTime
 )
 {
-    trsTime -= rdtsc();
-
     if (bandpass_correction && !delay_compensation) {
         // BandPass correction, if not doing delay compensation
 
@@ -600,8 +565,6 @@ fused_Transpose
             correctedData[channel][input / VECTOR_SIZE][majorTime + minorTime][IMAG][input % VECTOR_SIZE] = sample_i;
         }
     }
-
-    trsTime += rdtsc();
 }
 
 
@@ -616,9 +579,7 @@ fused
 , double subbandFrequency
 )
 {
-    double FIRfilterTime = 0, FFTtime = 0, trsTime = 0;
-
-#pragma omp parallel reduction(+: FIRfilterTime, FFTtime, trsTime)
+#pragma omp parallel
     {
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
@@ -630,17 +591,17 @@ fused
             if (delay_compensation) {
                 fused_TransposeInit(v, dv,
                         bandPassCorrectionWeights,
-                        delaysAtBegin, delaysAfterEnd, subbandFrequency, input, trsTime);
+                        delaysAtBegin, delaysAfterEnd, subbandFrequency, input);
             }
 
-            fused_FIRfilterInit(inputData, history, input, FIRfilterTime);
+            fused_FIRfilterInit(inputData, history, input);
 
             for (unsigned majorTime = 0; majorTime < NR_SAMPLES_PER_CHANNEL; majorTime += NR_SAMPLES_PER_MINOR_LOOP) {
-                fused_FIRfilter(inputData, filterWeights, history, filteredData, input, majorTime, FIRfilterTime);
-                fused_FFT(filteredData, FFTtime);
+                fused_FIRfilter(inputData, filterWeights, history, filteredData, input, majorTime);
+                fused_FFT(filteredData);
                 fused_Transpose(correctedData, bandPassCorrectionWeights, filteredData,
                         v, dv,
-                        input, majorTime, trsTime);
+                        input, majorTime);
             }
         }
     }
@@ -746,29 +707,9 @@ testCorrelator(CorrectedDataType& correctedData)
 }
 
 
-static void
-report
-( const char *msg
-, uint64_t nrOperations
-, uint64_t nrBytes
-, const double &startState
-, const double &stopState
-, double weight = 1
-)
-{
-    double runTime = (stopState - startState) * weight;
-
-    cout << msg << ": " << runTime << " s, "
-         << static_cast<double>(nrOperations) * 1e-12 / runTime
-         << " TFLOPS, " << static_cast<double>(nrBytes) * 1e-9 / runTime
-         << " GB/s" << std::endl;
-}
-
-
 static VisibilitiesType
 pipeline(double subbandFrequency)
 {
-    double powerStates[8];
     CorrectedDataType correctedData(CorrectedDataDims);
 
     const auto& bandPassCorrectionWeights = bandPassTestPattern();
@@ -780,20 +721,10 @@ pipeline(double subbandFrequency)
 
 #pragma omp critical (XeonPhi)
     {
-        powerStates[1] = omp_get_wtime();
-
         if (!use_fused_filter) {
             auto filteredData = FIR_filter(inputData, filterWeights);
-
-            powerStates[2] = omp_get_wtime();
-
             FFT(filteredData);
-
-            powerStates[3] = omp_get_wtime();
-
             correctedData = transpose(filteredData, bandPassCorrectionWeights);
-
-            powerStates[4] = omp_get_wtime();
 
             if (delay_compensation) {
                 applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency);
@@ -804,50 +735,9 @@ pipeline(double subbandFrequency)
                     delaysAtBegin, delaysAfterEnd, subbandFrequency);
         }
 
-        powerStates[5] = omp_get_wtime();
-
         result = correlate(correctedData);
-
-        powerStates[6] = omp_get_wtime();
     }
 
-#pragma omp critical (cout)
-    {
-        uint64_t nrFIRfilterOperations = NR_SAMPLES * COMPLEX * NR_TAPS * 2;
-        uint64_t nrFFToperations       = static_cast<uint64_t>(NR_SAMPLES * 5 * log2(NR_CHANNELS));
-
-        uint64_t nrDelayAndBandPassOperations = 0;
-        if (delay_compensation) {
-            nrDelayAndBandPassOperations = NR_SAMPLES * 2 * 6;
-        } else if (bandpass_correction) {
-            nrDelayAndBandPassOperations = NR_SAMPLES * COMPLEX;
-        }
-
-        uint64_t nrCorrelatorOperations = NR_INPUTS * NR_INPUTS / 2 * 8ULL * NR_CHANNELS * NR_SAMPLES_PER_CHANNEL;
-        uint64_t nrFusedOperations = nrFIRfilterOperations + nrFFToperations + nrDelayAndBandPassOperations;
-
-        totalNrOperations += nrFusedOperations + nrCorrelatorOperations; // is already atomic
-
-        if (!correctness_test) {
-            if (!use_fused_filter) {
-                report("FIR", nrFIRfilterOperations, sizeof(InputDataType) + sizeof(FilteredDataType), powerStates[1], powerStates[2]);
-                report("FFT", nrFFToperations, 2 * sizeof(FilteredDataType), powerStates[2], powerStates[3]);
-                if (bandpass_correction) {
-                    report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
-                } else {
-                    report("trs", 0, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
-                }
-                report("del", NR_SAMPLES * 2 * 6, 2 * sizeof(CorrectedDataType), powerStates[4], powerStates[5]);
-            } else {
-                report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5]);
-                report("FFT", nrFFToperations, 0, powerStates[1], powerStates[5]);
-                report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType), powerStates[1], powerStates[5]);
-                report("fused", nrFusedOperations, sizeof(InputDataType) + sizeof(CorrectedDataType), powerStates[1], powerStates[5]);
-            }
-
-            report("cor", nrCorrelatorOperations, sizeof(CorrectedDataType) + sizeof(VisibilitiesType), powerStates[5], powerStates[6]);
-        }
-    }
     return result;
 }
 
@@ -857,12 +747,9 @@ int main(int, char **)
     static_assert(NR_CHANNELS % 16 == 0);
     static_assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);
 
-    double startState = 0.0;
-    double stopState;
-
     fftInit();
 
-    if (correctness_test) {
+    {
         testFused();
         auto filteredData = testFIR_Filter();
         auto correctedData = testTranspose(filteredData);
@@ -874,14 +761,6 @@ int main(int, char **)
     auto visibilities = pipeline(60e6);
     cout << std::endl;
     checkCorrelatorTestPattern(visibilities);
-
-    if (!correctness_test) {
-        stopState = omp_get_wtime();
-
-        cout << "total: " << stopState - startState << " s" << ", "
-             << static_cast<double>(totalNrOperations) / (stopState - startState) * 1e-12
-             << " TFLOPS" << std::endl;
-    }
 
     fftDestroy();
     return 0;
