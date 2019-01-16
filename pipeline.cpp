@@ -132,7 +132,7 @@ FIR_filter
     {
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
-            float history[COMPLEX][NR_TAPS][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
+            float history[COMPLEX][NR_TAPS][NR_CHANNELS];
 
             for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++)
                 for (unsigned time = 0; time < NR_TAPS - 1; time ++)
@@ -319,10 +319,10 @@ applyDelays
 #pragma omp for collapse(2)
         for (unsigned inputMajor = 0; inputMajor < NR_INPUTS / VECTOR_SIZE; inputMajor ++) {
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                float v_rf[VECTOR_SIZE] __attribute__((aligned(sizeof (float[VECTOR_SIZE]))));
-                float v_if[VECTOR_SIZE] __attribute__((aligned(sizeof (float[VECTOR_SIZE]))));
-                float dv_rf[VECTOR_SIZE] __attribute__((aligned(sizeof (float[VECTOR_SIZE]))));
-                float dv_if[VECTOR_SIZE] __attribute__((aligned(sizeof (float[VECTOR_SIZE]))));
+                float v_rf[VECTOR_SIZE];
+                float v_if[VECTOR_SIZE];
+                float dv_rf[VECTOR_SIZE];
+                float dv_if[VECTOR_SIZE];
 
                 for (unsigned inputMinor = 0; inputMinor < VECTOR_SIZE; inputMinor ++) {
                     unsigned input = inputMajor * VECTOR_SIZE + inputMinor;
@@ -442,7 +442,7 @@ cmul(T &c_r, T &c_i, T a_r, T a_i, T b_r, T b_i)
 static void
 fused_FIRfilterInit
 ( const InputDataType& inputData
-, float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
+, float history[COMPLEX][NR_TAPS][NR_CHANNELS]
 , unsigned input
 )
 {
@@ -459,8 +459,8 @@ static void
 fused_FIRfilter
 ( const InputDataType& inputData
 , const FilterWeightsType& filterWeights
-, float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-, float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
+, float history[COMPLEX][NR_TAPS][NR_CHANNELS]
+, float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS]
 , unsigned input
 , unsigned majorTime
 )
@@ -485,7 +485,7 @@ fused_FIRfilter
 
 static void
 fused_FFT
-( float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
+( float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS]
 )
 {
     //  for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++)
@@ -497,8 +497,8 @@ fused_FFT
 
 static void
 fused_TransposeInit
-( float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-, float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
+( float v[COMPLEX][NR_CHANNELS]
+, float dv[COMPLEX][NR_CHANNELS]
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
 , const DelaysType& delaysAtBegin
 , const DelaysType& delaysAfterEnd
@@ -530,9 +530,9 @@ static void
 fused_Transpose
 ( CorrectedDataType& correctedData
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
-, float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-, float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
-, float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/
+, float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS]
+, float v[COMPLEX][NR_CHANNELS]
+, float dv[COMPLEX][NR_CHANNELS]
 , unsigned input
 , unsigned majorTime
 )
@@ -583,11 +583,11 @@ fused
     {
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
-            float history[COMPLEX][NR_TAPS][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
-            float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
+            float history[COMPLEX][NR_TAPS][NR_CHANNELS];
+            float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS];
 
-            float v[COMPLEX][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
-            float dv[COMPLEX][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
+            float v[COMPLEX][NR_CHANNELS];
+            float dv[COMPLEX][NR_CHANNELS];
             if (delay_compensation) {
                 fused_TransposeInit(v, dv,
                         bandPassCorrectionWeights,
