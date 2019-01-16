@@ -138,7 +138,6 @@ static FilteredDataType
 FIR_filter
 ( const InputDataType& inputData
 , const FilterWeightsType& filterWeights
-, unsigned
 )
 {
     FilteredDataType filteredData(FilteredDataDims);
@@ -193,7 +192,7 @@ checkFIR_FilterTestPattern(const FilteredDataType& filteredData)
 static FilteredDataType
 testFIR_Filter()
 {
-    const auto& filteredData = FIR_filter(inputTestPattern(), filterWeightsTestPattern(), 0);
+    const auto& filteredData = FIR_filter(inputTestPattern(), filterWeightsTestPattern());
 
     checkFIR_FilterTestPattern(filteredData);
     return filteredData;
@@ -809,7 +808,7 @@ pipeline
         powerStates[1] = omp_get_wtime();
 
         if (!use_fused_filter) {
-            auto filteredData = FIR_filter(inputData, filterWeights, iteration);
+            auto filteredData = FIR_filter(inputData, filterWeights);
 
             powerStates[2] = omp_get_wtime();
 
