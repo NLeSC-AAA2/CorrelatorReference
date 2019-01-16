@@ -614,9 +614,6 @@ fused
 , const DelaysType& delaysAtBegin
 , const DelaysType& delaysAfterEnd
 , double subbandFrequency
-, double &FIRfilterTimeRef
-, double &FFTtimeRef
-, double &trsTimeRef
 )
 {
     double FIRfilterTime = 0, FFTtime = 0, trsTime = 0;
@@ -647,10 +644,6 @@ fused
             }
         }
     }
-
-    FIRfilterTimeRef = FIRfilterTime;
-    FFTtimeRef = FFTtime;
-    trsTimeRef = trsTime;
 }
 
 
@@ -674,14 +667,11 @@ static void
 testFused()
 {
     CorrectedDataType correctedData(CorrectedDataDims);
-    double FIRfilterTime, FFTtime, trsTime;
 
     fused(
             correctedData, inputTestPattern(true), filterWeightsTestPattern(true),
             bandPassTestPattern(true),
-            delaysTestPattern(true, true), delaysTestPattern(false, true), 60e6,
-            FIRfilterTime, FFTtime, trsTime
-         );
+            delaysTestPattern(true, true), delaysTestPattern(false, true), 60e6);
 
     checkFusedTestPattern(correctedData);
 }
@@ -776,18 +766,16 @@ report
 
 
 static VisibilitiesType
-pipeline
-( double subbandFrequency
-, const BandPassCorrectionWeights& bandPassCorrectionWeights
-, const DelaysType& delaysAtBegin
-, const DelaysType& delaysAfterEnd
-, const InputDataType& inputData
-, const FilterWeightsType& filterWeights
-)
+pipeline(double subbandFrequency)
 {
     double powerStates[8];
-    double FIRfilterTime, FFTtime, trsTime, fusedTime;
     CorrectedDataType correctedData(CorrectedDataDims);
+
+    const auto& bandPassCorrectionWeights = bandPassTestPattern();
+    const auto& delaysAtBegin = delaysTestPattern(true);
+    const auto& delaysAfterEnd = delaysTestPattern(false);
+    const auto& inputData = inputTestPattern();
+    const auto& filterWeights = filterWeightsTestPattern();
     VisibilitiesType result(VisibilitiesDims);
 
 #pragma omp critical (XeonPhi)
@@ -813,8 +801,7 @@ pipeline
         } else {
             fused(correctedData, inputData, filterWeights,
                     bandPassCorrectionWeights,
-                    delaysAtBegin, delaysAfterEnd, subbandFrequency,
-                    FIRfilterTime, FFTtime, trsTime);
+                    delaysAtBegin, delaysAfterEnd, subbandFrequency);
         }
 
         powerStates[5] = omp_get_wtime();
@@ -841,7 +828,7 @@ pipeline
 
         totalNrOperations += nrFusedOperations + nrCorrelatorOperations; // is already atomic
 
-        if (!correctness_test){
+        if (!correctness_test) {
             if (!use_fused_filter) {
                 report("FIR", nrFIRfilterOperations, sizeof(InputDataType) + sizeof(FilteredDataType), powerStates[1], powerStates[2]);
                 report("FFT", nrFFToperations, 2 * sizeof(FilteredDataType), powerStates[2], powerStates[3]);
@@ -852,9 +839,9 @@ pipeline
                 }
                 report("del", NR_SAMPLES * 2 * 6, 2 * sizeof(CorrectedDataType), powerStates[4], powerStates[5]);
             } else {
-                report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5], FIRfilterTime / fusedTime);
-                report("FFT", nrFFToperations, 0, powerStates[1], powerStates[5],  FFTtime / fusedTime);
-                report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType), powerStates[1], powerStates[5], trsTime / fusedTime);
+                report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5]);
+                report("FFT", nrFFToperations, 0, powerStates[1], powerStates[5]);
+                report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType), powerStates[1], powerStates[5]);
                 report("fused", nrFusedOperations, sizeof(InputDataType) + sizeof(CorrectedDataType), powerStates[1], powerStates[5]);
             }
 
@@ -884,23 +871,9 @@ int main(int, char **)
 
     omp_set_nested(1);
 
-    {
-        VisibilitiesType visibilities(VisibilitiesDims);
-        for (unsigned i = 0; i < 100 && (i < 2 || (omp_get_wtime() - startState) < 20); i ++) {
-            if (i == 1)
-            {
-#pragma omp barrier
-#pragma omp single
-                startState = omp_get_wtime();
-            }
-
-            visibilities = pipeline(60e6, bandPassTestPattern(),
-                    delaysTestPattern(true), delaysTestPattern(false), inputTestPattern(), filterWeightsTestPattern());
-        }
-
-        cout << std::endl;
-        checkCorrelatorTestPattern(visibilities);
-    }
+    auto visibilities = pipeline(60e6);
+    cout << std::endl;
+    checkCorrelatorTestPattern(visibilities);
 
     if (!correctness_test) {
         stopState = omp_get_wtime();
