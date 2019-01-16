@@ -89,44 +89,59 @@ static uint64_t totalNrOperations;
 
 ////// FIR filter
 
-static void
-setInputTestPattern(InputDataType& inputData)
+static InputDataType
+inputTestPattern(bool isFused = false)
 {
-    signed char count = 64;
+    InputDataType result(InputDataDims);
 
-    for (unsigned input = 0; input < NR_INPUTS; input ++)
-        for (unsigned ri = 0; ri < COMPLEX; ri ++)
-            for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1; time ++)
-                for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                    inputData[input][ri][time][channel] = count ++;
+    if (isFused) {
+        std::fill_n(result.data(), result.num_elements(), 0);
+        if (NR_INPUTS > 6 && NR_SAMPLES_PER_CHANNEL > 27 && NR_CHANNELS > 12) {
+            result[6][REAL][27 + NR_TAPS - 1][12] = 2;
+            result[6][IMAG][27 + NR_TAPS - 1][12] = 3;
+        }
+    } else {
+        signed char count = 64;
+        for (unsigned input = 0; input < NR_INPUTS; input ++)
+            for (unsigned ri = 0; ri < COMPLEX; ri ++)
+                for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1; time ++)
+                    for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
+                        result[input][ri][time][channel] = count ++;
 
-    if (NR_INPUTS > 9 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 12) {
-        inputData[9][REAL][98 + NR_TAPS - 1][12] = 4;
-        inputData[9][REAL][99 + NR_TAPS - 1][12] = 5;
+        if (NR_INPUTS > 9 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 12) {
+            result[9][REAL][98 + NR_TAPS - 1][12] = 4;
+            result[9][REAL][99 + NR_TAPS - 1][12] = 5;
+        }
     }
+
+    return result;
+}
+
+static FilterWeightsType
+filterWeightsTestPattern(bool isFused = false)
+{
+    FilterWeightsType result(FilterWeightsDims);
+    std::fill_n(result.data(), result.num_elements(), 0.0f);
+
+    if (isFused && NR_TAPS > 11 && NR_CHANNELS > 12) {
+        result[15][12] = 2;
+    } else if (NR_TAPS > 4 && NR_CHANNELS > 12) {
+        result[15][12] = 2;
+        result[14][12] = 3;
+    }
+
+    return result;
 }
 
 
-static void
-setFilterWeightsTestPattern(FilterWeightsType& filterWeights)
-{
-    std::fill_n(filterWeights.data(), filterWeights.num_elements(), 0.0f);
-
-    if (NR_TAPS > 4 && NR_CHANNELS > 12) {
-        filterWeights[15][12] = 2;
-        filterWeights[14][12] = 3;
-    }
-}
-
-
-static void
+static FilteredDataType
 FIR_filter
-( FilteredDataType& filteredData
-, const InputDataType& inputData
+( const InputDataType& inputData
 , const FilterWeightsType& filterWeights
 , unsigned
 )
 {
+    FilteredDataType filteredData(FilteredDataDims);
 #pragma omp parallel
     {
 #pragma omp for schedule(dynamic)
@@ -154,6 +169,8 @@ FIR_filter
             }
         }
     }
+
+    return filteredData;
 }
 
 
@@ -173,19 +190,13 @@ checkFIR_FilterTestPattern(const FilteredDataType& filteredData)
 }
 
 
-static void
-testFIR_Filter
-( FilteredDataType& filteredData
-, InputDataType& inputData
-, FilterWeightsType& filterWeights
-)
+static FilteredDataType
+testFIR_Filter()
 {
-    setInputTestPattern(inputData);
-    setFilterWeightsTestPattern(filterWeights);
-
-    FIR_filter(filteredData, inputData, filterWeights, 0);
+    const auto& filteredData = FIR_filter(inputTestPattern(), filterWeightsTestPattern(), 0);
 
     checkFIR_FilterTestPattern(filteredData);
+    return filteredData;
 }
 
 
@@ -274,14 +285,14 @@ FFT(FilteredDataType& filteredData, unsigned)
 
 ////// transpose
 
-static void
+static CorrectedDataType
 transpose
-( CorrectedDataType& correctedData
-, const FilteredDataType& filteredData
+( const FilteredDataType& filteredData
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
 , unsigned
 )
 {
+    CorrectedDataType correctedData(CorrectedDataDims);
 #pragma omp parallel
     {
 #pragma omp for schedule(dynamic)
@@ -305,6 +316,8 @@ transpose
             }
         }
     }
+
+    return correctedData;
 }
 
 
@@ -365,34 +378,29 @@ applyDelays
 }
 
 
-static void
-setBandPassTestPattern(BandPassCorrectionWeights& bandPassCorrectionWeights)
+static BandPassCorrectionWeights
+bandPassTestPattern(bool isFused = false)
 {
-    std::fill_n(bandPassCorrectionWeights.data(), bandPassCorrectionWeights.num_elements(), 1);
+    BandPassCorrectionWeights result(BandPassCorrectionWeightsDims);
+    std::fill_n(result.data(), result.num_elements(), 1);
 
-    if (NR_CHANNELS > 5)
-        bandPassCorrectionWeights[5] = 2;
+    if (!isFused && NR_CHANNELS > 5)
+        result[5] = 2;
+
+    return result;
 }
 
 
-static void
-setDelaysTestPattern(DelaysType& delaysAtBegin, DelaysType& delaysAfterEnd)
+static DelaysType
+delaysTestPattern(bool isBegin, bool isFused = false)
 {
-    std::fill_n(delaysAtBegin.data(), delaysAtBegin.num_elements(), 0);
-    std::fill_n(delaysAfterEnd.data(), delaysAfterEnd.num_elements(), 0);
+    DelaysType result(DelaysDims);
+    std::fill_n(result.data(), result.num_elements(), 0);
 
-    if (NR_INPUTS > 22)
-        delaysAfterEnd[22] = 1e-6;
-}
+    if (!isBegin && !isFused && NR_INPUTS > 22)
+        result[22] = 1e-6;
 
-
-static void
-setTransposeTestPattern(FilteredDataType& filteredData)
-{
-    if (NR_INPUTS > 22 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 5) {
-        filteredData[22][99][REAL][5] = 2;
-        filteredData[22][99][IMAG][5] = 3;
-    }
+    return result;
 }
 
 
@@ -412,29 +420,27 @@ checkTransposeTestPattern(const CorrectedDataType& correctedData)
 }
 
 
-static void
-testTranspose
-( FilteredDataType& filteredData
-, BandPassCorrectionWeights& bandPassCorrectionWeights
-, CorrectedDataType& correctedData
-, DelaysType& delaysAtBegin
-, DelaysType& delaysAfterEnd
-)
+static CorrectedDataType
+testTranspose(FilteredDataType& filteredData)
 {
-    setTransposeTestPattern(filteredData);
-
-    if (bandpass_correction) {
-        setBandPassTestPattern(bandPassCorrectionWeights);
+    if (NR_INPUTS > 22 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 5) {
+        filteredData[22][99][REAL][5] = 2;
+        filteredData[22][99][IMAG][5] = 3;
     }
 
-    transpose(correctedData, filteredData, bandPassCorrectionWeights, 0);
+    BandPassCorrectionWeights bandPassCorrectionWeights(BandPassCorrectionWeightsDims);
+    if (bandpass_correction) {
+        bandPassCorrectionWeights = bandPassTestPattern();
+    }
+
+    auto correctedData = transpose(filteredData, bandPassCorrectionWeights, 0);
 
     if (delay_compensation) {
-        setDelaysTestPattern(delaysAtBegin, delaysAfterEnd);
-        applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, 60e6, 0);
+        applyDelays(correctedData, delaysTestPattern(true), delaysTestPattern(false), 60e6, 0);
     }
 
     checkTransposeTestPattern(correctedData);
+    return correctedData;
 }
 
 
@@ -660,33 +666,6 @@ fused
 
 
 static void
-setFusedTestPattern
-( InputDataType& inputData
-, FilterWeightsType& filterWeights
-, BandPassCorrectionWeights& bandPassCorrectionWeights
-, DelaysType& delaysAtBegin
-, DelaysType& delaysAfterEnd
-)
-{
-    std::fill_n(inputData.data(), inputData.num_elements(), 0);
-    std::fill_n(filterWeights.data(), filterWeights.num_elements(), 0.0f);
-
-    std::fill_n(delaysAtBegin.data(), delaysAtBegin.num_elements(), 0);
-    std::fill_n(delaysAfterEnd.data(), delaysAfterEnd.num_elements(), 0);
-
-    std::fill_n(bandPassCorrectionWeights.data(), bandPassCorrectionWeights.num_elements(), 1);
-
-    if (NR_TAPS > 11 && NR_CHANNELS > 12)
-        filterWeights[15][12] = 2;
-
-    if (NR_INPUTS > 6 && NR_SAMPLES_PER_CHANNEL > 27 && NR_CHANNELS > 12) {
-        inputData[6][REAL][27 + NR_TAPS - 1][12] = 2;
-        inputData[6][IMAG][27 + NR_TAPS - 1][12] = 3;
-    }
-}
-
-
-static void
 checkFusedTestPattern(const CorrectedDataType& correctedData)
 {
     for (unsigned input = 0; input < NR_INPUTS; input ++)
@@ -703,22 +682,15 @@ checkFusedTestPattern(const CorrectedDataType& correctedData)
 
 
 static void
-testFused
-( InputDataType& inputData
-, FilterWeightsType& filterWeights
-, BandPassCorrectionWeights& bandPassCorrectionWeights
-, CorrectedDataType& correctedData
-, DelaysType& delaysAtBegin
-, DelaysType& delaysAfterEnd
-)
+testFused()
 {
-    setFusedTestPattern(inputData, filterWeights, bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd);
+    CorrectedDataType correctedData(CorrectedDataDims);
     double FIRfilterTime, FFTtime, trsTime;
 
     fused(
-            correctedData, inputData, filterWeights,
-            bandPassCorrectionWeights,
-            delaysAtBegin, delaysAfterEnd, 60e6,
+            correctedData, inputTestPattern(true), filterWeightsTestPattern(true),
+            bandPassTestPattern(true),
+            delaysTestPattern(true, true), delaysTestPattern(false, true), 60e6,
             0, FIRfilterTime, FFTtime, trsTime
          );
 
@@ -729,14 +701,10 @@ testFused
 
 ////// correlator
 
-static void
-correlate
-( VisibilitiesType& visibilities
-, const CorrectedDataType& correctedData
-, unsigned
-)
+static VisibilitiesType
+correlate(const CorrectedDataType& correctedData, unsigned)
 {
-    std::fill_n(visibilities.data(), visibilities.num_elements(), 0.0f);
+    VisibilitiesType visibilities(VisibilitiesDims);
 #pragma omp parallel
     {
 #pragma omp for collapse(2) schedule(dynamic,16)
@@ -764,18 +732,8 @@ correlate
             }
         }
     }
-}
 
-
-static void
-setCorrelatorTestPattern(CorrectedDataType& correctedData)
-{
-    if constexpr (NR_CHANNELS > 5 && NR_SAMPLES_PER_CHANNEL > 99 && NR_INPUTS > 19) {
-        correctedData[5][ 0 / VECTOR_SIZE][99][REAL][ 0 % VECTOR_SIZE] = 3;
-        correctedData[5][ 0 / VECTOR_SIZE][99][IMAG][ 0 % VECTOR_SIZE] = 4;
-        correctedData[5][18 / VECTOR_SIZE][99][REAL][18 % VECTOR_SIZE] = 5;
-        correctedData[5][18 / VECTOR_SIZE][99][IMAG][18 % VECTOR_SIZE] = 6;
-    }
+    return visibilities;
 }
 
 
@@ -794,14 +752,16 @@ checkCorrelatorTestPattern(const VisibilitiesType& visibilities)
 
 
 static void
-testCorrelator
-( CorrectedDataType& correctedData
-, VisibilitiesType& visibilities
-)
+testCorrelator(CorrectedDataType& correctedData)
 {
-    setCorrelatorTestPattern(correctedData);
+    if constexpr (NR_CHANNELS > 5 && NR_SAMPLES_PER_CHANNEL > 99 && NR_INPUTS > 19) {
+        correctedData[5][ 0 / VECTOR_SIZE][99][REAL][ 0 % VECTOR_SIZE] = 3;
+        correctedData[5][ 0 / VECTOR_SIZE][99][IMAG][ 0 % VECTOR_SIZE] = 4;
+        correctedData[5][18 / VECTOR_SIZE][99][REAL][18 % VECTOR_SIZE] = 5;
+        correctedData[5][18 / VECTOR_SIZE][99][IMAG][18 % VECTOR_SIZE] = 6;
+    }
 
-    correlate(visibilities, correctedData, 0);
+    auto visibilities = correlate(correctedData, 0);
 
     checkCorrelatorTestPattern(visibilities);
 }
@@ -828,30 +788,28 @@ report
 }
 
 
-static void
+static VisibilitiesType
 pipeline
 ( double subbandFrequency
 , unsigned iteration
-, CorrectedDataType& correctedData
-, FilteredDataType& filteredData
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
 , const DelaysType& delaysAtBegin
 , const DelaysType& delaysAfterEnd
 , const InputDataType& inputData
 , const FilterWeightsType& filterWeights
-, VisibilitiesType& visibilities
 )
 {
     double powerStates[8];
-    double fusedTime, FIRfilterTime, FFTtime, trsTime;
-    fusedTime = FIRfilterTime = FFTtime = trsTime = 0;
+    double FIRfilterTime, FFTtime, trsTime, fusedTime;
+    CorrectedDataType correctedData(CorrectedDataDims);
+    VisibilitiesType result(VisibilitiesDims);
 
 #pragma omp critical (XeonPhi)
     {
         powerStates[1] = omp_get_wtime();
 
         if (!use_fused_filter) {
-            FIR_filter(filteredData, inputData, filterWeights, iteration);
+            auto filteredData = FIR_filter(inputData, filterWeights, iteration);
 
             powerStates[2] = omp_get_wtime();
 
@@ -859,7 +817,7 @@ pipeline
 
             powerStates[3] = omp_get_wtime();
 
-            transpose(correctedData, filteredData, bandPassCorrectionWeights, iteration);
+            correctedData = transpose(filteredData, bandPassCorrectionWeights, iteration);
 
             powerStates[4] = omp_get_wtime();
 
@@ -875,7 +833,7 @@ pipeline
 
         powerStates[5] = omp_get_wtime();
 
-        correlate(visibilities, correctedData, iteration);
+        result = correlate(correctedData, iteration);
 
         powerStates[6] = omp_get_wtime();
     }
@@ -916,6 +874,7 @@ pipeline
 
         report("cor", nrCorrelatorOperations, sizeof(CorrectedDataType) + sizeof(VisibilitiesType), powerStates[5], powerStates[6]);
     }
+    return result;
 }
 
 
@@ -924,36 +883,22 @@ int main(int, char **)
     static_assert(NR_CHANNELS % 16 == 0);
     static_assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);
 
-    InputDataType inputData(InputDataDims);
-    FilteredDataType filteredData(FilteredDataDims);
-    FilterWeightsType filterWeights(FilterWeightsDims);
-    BandPassCorrectionWeights bandPassCorrectionWeights(BandPassCorrectionWeightsDims);
-    DelaysType delaysAtBegin(DelaysDims), delaysAfterEnd(DelaysDims);
-    CorrectedDataType correctedData(CorrectedDataDims);
-    VisibilitiesType visibilities(VisibilitiesDims);
-
     double startState = 0.0;
     double stopState;
 
     fftInit();
 
     if (correctness_test) {
-        testFused(inputData, filterWeights, bandPassCorrectionWeights, correctedData, delaysAtBegin, delaysAfterEnd);
-        testFIR_Filter(filteredData, inputData, filterWeights);
-        testTranspose(filteredData, bandPassCorrectionWeights, correctedData, delaysAtBegin, delaysAfterEnd);
-        testCorrelator(correctedData, visibilities);
+        testFused();
+        auto filteredData = testFIR_Filter();
+        auto correctedData = testTranspose(filteredData);
+        testCorrelator(correctedData);
     }
 
     omp_set_nested(1);
 
-    setBandPassTestPattern(bandPassCorrectionWeights);
-
     {
-        setInputTestPattern(inputData);
-        setDelaysTestPattern(delaysAtBegin, delaysAfterEnd);
-
-        setFilterWeightsTestPattern(filterWeights);
-
+        VisibilitiesType visibilities(VisibilitiesDims);
         for (unsigned i = 0; i < 100 && (i < 2 || (omp_get_wtime() - startState) < 20); i ++) {
             if (i == 1)
             {
@@ -962,12 +907,13 @@ int main(int, char **)
                 startState = omp_get_wtime();
             }
 
-            pipeline(60e6, i, correctedData, filteredData, bandPassCorrectionWeights,
-                    delaysAtBegin, delaysAfterEnd, inputData, filterWeights, visibilities);
+            visibilities = pipeline(60e6, i, bandPassTestPattern(),
+                    delaysTestPattern(true), delaysTestPattern(false), inputTestPattern(), filterWeightsTestPattern());
         }
-    }
-    cout << std::endl;
-    checkCorrelatorTestPattern(visibilities);
+        cout << std::endl;
+        checkCorrelatorTestPattern(visibilities);
+
+  }
 
     if (!correctness_test) {
         stopState = omp_get_wtime();
