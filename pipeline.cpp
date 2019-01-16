@@ -568,10 +568,9 @@ fused_Transpose
 }
 
 
-static void
+static CorrectedDataType
 fused
-( CorrectedDataType& correctedData
-, const InputDataType& inputData
+( const InputDataType& inputData
 , const FilterWeightsType& filterWeights
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
 , const DelaysType& delaysAtBegin
@@ -579,6 +578,7 @@ fused
 , double subbandFrequency
 )
 {
+    CorrectedDataType correctedData(CorrectedDataDims);
 #pragma omp parallel
     {
 #pragma omp for schedule(dynamic)
@@ -605,6 +605,8 @@ fused
             }
         }
     }
+
+    return correctedData;
 }
 
 
@@ -627,10 +629,8 @@ checkFusedTestPattern(const CorrectedDataType& correctedData)
 static void
 testFused()
 {
-    CorrectedDataType correctedData(CorrectedDataDims);
-
-    fused(
-            correctedData, inputTestPattern(true), filterWeightsTestPattern(true),
+    auto correctedData = fused(
+            inputTestPattern(true), filterWeightsTestPattern(true),
             bandPassTestPattern(true),
             delaysTestPattern(true, true), delaysTestPattern(false, true), 60e6);
 
@@ -730,7 +730,7 @@ pipeline(double subbandFrequency)
                 applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency);
             }
         } else {
-            fused(correctedData, inputData, filterWeights,
+            correctedData = fused(inputData, filterWeights,
                     bandPassCorrectionWeights,
                     delaysAtBegin, delaysAfterEnd, subbandFrequency);
         }
