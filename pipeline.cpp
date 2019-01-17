@@ -41,7 +41,6 @@
 #endif
 
 constexpr int NR_INPUTS = 2 * 576;
-constexpr int VECTOR_SIZE = 8;
 
 constexpr int NR_CHANNELS = 64;
 constexpr int NR_SAMPLES_PER_CHANNEL = 3072;
@@ -65,8 +64,8 @@ typedef boost::multi_array<float, 1> BandPassCorrectionWeights;
 static const auto BandPassCorrectionWeightsDims = boost::extents[NR_CHANNELS];
 typedef boost::multi_array<double, 1> DelaysType;
 static const auto DelaysDims = boost::extents[NR_INPUTS];
-typedef boost::multi_array<float, 5> CorrectedDataType;
-static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS / VECTOR_SIZE][NR_SAMPLES_PER_CHANNEL][COMPLEX][VECTOR_SIZE];
+typedef boost::multi_array<float, 4> CorrectedDataType;
+static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS][NR_SAMPLES_PER_CHANNEL][COMPLEX];
 typedef boost::multi_array<float, 3> VisibilitiesType;
 static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
@@ -289,19 +288,13 @@ transpose
     {
 #pragma omp for schedule(dynamic)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-            for (unsigned inputMajor = 0; inputMajor < NR_INPUTS; inputMajor += VECTOR_SIZE) {
+            for (unsigned input = 0; input < NR_INPUTS; input ++) {
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
                     for (unsigned realImag = 0; realImag < COMPLEX; realImag ++) {
-                        for (unsigned inputMinor = 0; inputMinor < VECTOR_SIZE; inputMinor ++) {
-                            unsigned input = inputMajor + inputMinor;
-
-                            if (NR_INPUTS % VECTOR_SIZE == 0 || input < NR_INPUTS) {
-                                if (bandpass_correction) {
-                                    correctedData[channel][inputMajor / VECTOR_SIZE][time][realImag][inputMinor] = bandPassCorrectionWeights[channel] * filteredData[input][time][realImag][channel];
-                                } else {
-                                    correctedData[channel][inputMajor / VECTOR_SIZE][time][realImag][inputMinor] = filteredData[input][time][realImag][channel];
-                                }
-                            }
+                        if (bandpass_correction) {
+                            correctedData[channel][input][time][realImag] = bandPassCorrectionWeights[channel] * filteredData[input][time][realImag][channel];
+                        } else {
+                            correctedData[channel][input][time][realImag] = filteredData[input][time][realImag][channel];
                         }
                     }
                 }
@@ -324,44 +317,36 @@ applyDelays
 #pragma omp parallel
     {
 #pragma omp for collapse(2)
-        for (unsigned inputMajor = 0; inputMajor < NR_INPUTS / VECTOR_SIZE; inputMajor ++) {
+        for (unsigned input = 0; input < NR_INPUTS; input ++) {
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                float v_rf[VECTOR_SIZE];
-                float v_if[VECTOR_SIZE];
-                float dv_rf[VECTOR_SIZE];
-                float dv_if[VECTOR_SIZE];
+                float v_rf;
+                float v_if;
+                float dv_rf;
+                float dv_if;
 
-                for (unsigned inputMinor = 0; inputMinor < VECTOR_SIZE; inputMinor ++) {
-                    unsigned input = inputMajor * VECTOR_SIZE + inputMinor;
-
-                    if (NR_INPUTS % VECTOR_SIZE == 0 || input < NR_INPUTS) {
-                        double phiBegin = -2.0 * 3.141592653589793 * delaysAtBegin[input];
-                        double phiEnd   = -2.0 * 3.141592653589793 * delaysAfterEnd[input];
-                        double deltaPhi = (phiEnd - phiBegin) / NR_SAMPLES_PER_CHANNEL;
-                        double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * (SUBBAND_BANDWIDTH / NR_CHANNELS);
-                        float myPhiBegin = static_cast<float>((phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */);
-                        float myPhiDelta = static_cast<float>(deltaPhi * channelFrequency);
-                        sincosf(myPhiBegin, &v_if[inputMinor], &v_rf[inputMinor]);
-                        sincosf(myPhiDelta, &dv_if[inputMinor], &dv_rf[inputMinor]);
-                    }
-                }
+                double phiBegin = -2.0 * 3.141592653589793 * delaysAtBegin[input];
+                double phiEnd   = -2.0 * 3.141592653589793 * delaysAfterEnd[input];
+                double deltaPhi = (phiEnd - phiBegin) / NR_SAMPLES_PER_CHANNEL;
+                double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * (SUBBAND_BANDWIDTH / NR_CHANNELS);
+                float myPhiBegin = static_cast<float>((phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */);
+                float myPhiDelta = static_cast<float>(deltaPhi * channelFrequency);
+                sincosf(myPhiBegin, &v_if, &v_rf);
+                sincosf(myPhiDelta, &dv_if, &dv_rf);
 
                 for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                    for (int i = 0; i < 8; i++) {
-                        float sample_r = correctedData[channel][inputMajor][time][REAL][i];
-                        float sample_i = correctedData[channel][inputMajor][time][IMAG][i];
+                    float sample_r = correctedData[channel][input][time][REAL];
+                    float sample_i = correctedData[channel][input][time][IMAG];
 
-                        float tmp = sample_r * v_if[i];
-                        sample_r = (sample_r * v_rf[i]) - (sample_i * v_if[i]);
-                        sample_i = (sample_i * v_rf[i]) + tmp;
+                    float tmp = sample_r * v_if;
+                    sample_r = (sample_r * v_rf) - (sample_i * v_if);
+                    sample_i = (sample_i * v_rf) + tmp;
 
-                        tmp = v_rf[i] * dv_if[i];
-                        v_rf[i] = (v_rf[i] * dv_rf[i]) - (v_if[i] * dv_if[i]);
-                        v_if[i] = (v_if[i] * dv_rf[i]) + tmp;
+                    tmp = v_rf * dv_if;
+                    v_rf = (v_rf * dv_rf) - (v_if * dv_if);
+                    v_if = (v_if * dv_rf) + tmp;
 
-                        correctedData[channel][inputMajor][time][REAL][i] = sample_r;
-                        correctedData[channel][inputMajor][time][IMAG][i] = sample_i;
-                    }
+                    correctedData[channel][input][time][REAL] = sample_r;
+                    correctedData[channel][input][time][IMAG] = sample_i;
                 }
             }
         }
@@ -401,11 +386,11 @@ checkTransposeTestPattern(const CorrectedDataType& correctedData)
     for (int channel = 0; channel < NR_CHANNELS; channel ++)
         for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (int input = 0; input < NR_INPUTS; input ++)
-                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0.0f || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0.0f) {
+                if (correctedData[channel][input][time][REAL] != 0.0f || correctedData[channel][input][time][IMAG] != 0.0f) {
                     cout << "channel = " << channel << ", time = " << time
                          << ", input = " << input << ", value = ("
-                         << correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE]
-                         << ',' << correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE]
+                         << correctedData[channel][input][time][REAL]
+                         << ',' << correctedData[channel][input][time][IMAG]
                          << ')' << std::endl;
                 }
 }
@@ -566,8 +551,8 @@ fused_Transpose
                 cmul(v[REAL][channel], v[IMAG][channel], v[REAL][channel], v[IMAG][channel], dv[REAL][channel], dv[IMAG][channel]);
             }
 
-            correctedData[channel][input / VECTOR_SIZE][majorTime + minorTime][REAL][input % VECTOR_SIZE] = sample_r;
-            correctedData[channel][input / VECTOR_SIZE][majorTime + minorTime][IMAG][input % VECTOR_SIZE] = sample_i;
+            correctedData[channel][input][majorTime + minorTime][REAL] = sample_r;
+            correctedData[channel][input][majorTime + minorTime][IMAG] = sample_i;
         }
     }
 }
@@ -622,11 +607,11 @@ checkFusedTestPattern(const CorrectedDataType& correctedData)
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0.0f || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0.0f) {
+                if (correctedData[channel][input][time][REAL] != 0.0f || correctedData[channel][input][time][IMAG] != 0.0f) {
                     cout << "input = " << input << ", time = " << time
                          << ", channel = " << channel << ": ("
-                         << correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE]
-                         << ", " << correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE]
+                         << correctedData[channel][input][time][REAL]
+                         << ", " << correctedData[channel][input][time][IMAG]
                          << ')' << std::endl;
                 }
 }
@@ -660,10 +645,10 @@ correlate(const CorrectedDataType& correctedData)
                     float sum_real = 0, sum_imag = 0;
 
                     for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                        float sample_X_real = correctedData[channel][statX / VECTOR_SIZE][time][REAL][statX % VECTOR_SIZE];
-                        float sample_X_imag = correctedData[channel][statX / VECTOR_SIZE][time][IMAG][statX % VECTOR_SIZE];
-                        float sample_Y_real = correctedData[channel][statY / VECTOR_SIZE][time][REAL][statY % VECTOR_SIZE];
-                        float sample_Y_imag = correctedData[channel][statY / VECTOR_SIZE][time][IMAG][statY % VECTOR_SIZE];
+                        float sample_X_real = correctedData[channel][statX][time][REAL];
+                        float sample_X_imag = correctedData[channel][statX][time][IMAG];
+                        float sample_Y_real = correctedData[channel][statY][time][REAL];
+                        float sample_Y_imag = correctedData[channel][statY][time][IMAG];
 
                         sum_real += sample_Y_real * sample_X_real;
                         sum_imag += sample_Y_imag * sample_X_real;
@@ -701,10 +686,10 @@ static void
 testCorrelator(CorrectedDataType& correctedData)
 {
     if constexpr (NR_CHANNELS > 5 && NR_SAMPLES_PER_CHANNEL > 99 && NR_INPUTS > 19) {
-        correctedData[5][ 0 / VECTOR_SIZE][99][REAL][ 0 % VECTOR_SIZE] = 3;
-        correctedData[5][ 0 / VECTOR_SIZE][99][IMAG][ 0 % VECTOR_SIZE] = 4;
-        correctedData[5][18 / VECTOR_SIZE][99][REAL][18 % VECTOR_SIZE] = 5;
-        correctedData[5][18 / VECTOR_SIZE][99][IMAG][18 % VECTOR_SIZE] = 6;
+        correctedData[5][ 0][99][REAL] = 3;
+        correctedData[5][ 0][99][IMAG] = 4;
+        correctedData[5][18][99][REAL] = 5;
+        correctedData[5][18][99][IMAG] = 6;
     }
 
     auto visibilities = correlate(correctedData);
