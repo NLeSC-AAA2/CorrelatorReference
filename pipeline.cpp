@@ -56,8 +56,8 @@ using std::cout, std::cerr;
 
 typedef boost::multi_array<int8_t, 4> InputDataType;
 static const auto InputDataDims = boost::extents[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS];
-typedef boost::multi_array<float, 4> FilteredDataType;
-static const auto FilteredDataDims = boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][COMPLEX][NR_CHANNELS];
+typedef boost::multi_array<std::complex<float>, 3> FilteredDataType;
+static const auto FilteredDataDims = boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][NR_CHANNELS];
 typedef boost::multi_array<float, 2> FilterWeightsType;
 static const auto FilterWeightsDims = boost::extents[NR_TAPS][NR_CHANNELS];
 typedef boost::multi_array<float, 1> BandPassCorrectionWeights;
@@ -71,8 +71,8 @@ static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][COMPLEX][NR_BAS
 
 typedef boost::multi_array<float, 3> HistoryType;
 static const auto HistoryDims = boost::extents[COMPLEX][NR_TAPS][NR_CHANNELS];
-typedef boost::multi_array<float, 3> FusedFilterType;
-static const auto FusedFilterDims = boost::extents[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS];
+typedef boost::multi_array<std::complex<float>, 2> FusedFilterType;
+static const auto FusedFilterDims = boost::extents[NR_SAMPLES_PER_MINOR_LOOP][NR_CHANNELS];
 typedef boost::multi_array<float, 2> ComplexChannelType;
 static const auto ComplexChannelDims = boost::extents[COMPLEX][NR_CHANNELS];
 
@@ -155,7 +155,11 @@ FIR_filter
                         for (unsigned tap = 0; tap < NR_TAPS; tap ++)
                             sum += filterWeights[tap][channel] * history[real_imag][(time + tap) % NR_TAPS][channel];
 
-                        filteredData[input][time][real_imag][channel] = sum;
+                        if (real_imag == REAL) {
+                            filteredData[input][time][channel] = {sum, filteredData[input][time][channel].imag()};
+                        } else {
+                            filteredData[input][time][channel] = {filteredData[input][time][channel].real(), sum};
+                        }
                     }
                 }
             }
@@ -172,11 +176,11 @@ checkFIR_FilterTestPattern(const FilteredDataType& filteredData)
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                if (filteredData[input][time][REAL][channel] != 0.0f || filteredData[input][time][IMAG][channel] != 0.0f) {
+                if (filteredData[input][time][channel].real() != 0.0f || filteredData[input][time][channel].imag() != 0.0f) {
                     cout << "input = " << input << ", time = " << time
                          << ", channel = " << channel << ", sample = ("
-                         << filteredData[input][time][REAL][channel] << ','
-                         << filteredData[input][time][IMAG][channel] << ')'
+                         << filteredData[input][time][channel].real() << ','
+                         << filteredData[input][time][channel].imag() << ')'
                          << std::endl;
                 }
 }
@@ -209,13 +213,6 @@ fftInit()
         exit(1);
     };
 
-    error = DftiSetValue(handle, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
-
-    if (error != DFTI_NO_ERROR) {
-        cerr << "DftiSetValue failed" << std::endl;
-        exit(1);
-    };
-
     error = DftiSetValue(handle, DFTI_NUMBER_OF_TRANSFORMS, NR_SAMPLES_PER_MINOR_LOOP);
 
     if (error != DFTI_NO_ERROR) {
@@ -223,14 +220,14 @@ fftInit()
         exit(1);
     }
 
-    error = DftiSetValue(handle, DFTI_INPUT_DISTANCE, COMPLEX * NR_CHANNELS);
+    error = DftiSetValue(handle, DFTI_INPUT_DISTANCE, NR_CHANNELS);
 
     if (error != DFTI_NO_ERROR) {
         cerr << "DftiSetValue failed" << std::endl;
         exit(1);
     }
 
-    error = DftiSetValue(handle, DFTI_OUTPUT_DISTANCE, COMPLEX * NR_CHANNELS);
+    error = DftiSetValue(handle, DFTI_OUTPUT_DISTANCE, NR_CHANNELS);
 
     if (error != DFTI_NO_ERROR) {
         cerr << "DftiSetValue failed" << std::endl;
@@ -267,10 +264,8 @@ FFT(FilteredDataType& filteredData)
     {
 #pragma omp for collapse(2) schedule(dynamic)
         for (int input = 0; input < NR_INPUTS; input ++)
-            //      for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
-            //    DftiComputeForward(handle, filteredData[input][time][REAL], filteredData[input][time][IMAG]);
             for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time += NR_SAMPLES_PER_MINOR_LOOP)
-                DftiComputeForward(handle, filteredData[input][time][REAL].origin(), filteredData[input][time][IMAG].origin());
+                DftiComputeForward(handle, filteredData[input][time].origin());
     }
 }
 
@@ -290,12 +285,12 @@ transpose
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
             for (unsigned input = 0; input < NR_INPUTS; input ++) {
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                    for (unsigned realImag = 0; realImag < COMPLEX; realImag ++) {
-                        if (bandpass_correction) {
-                            correctedData[channel][input][time][realImag] = bandPassCorrectionWeights[channel] * filteredData[input][time][realImag][channel];
-                        } else {
-                            correctedData[channel][input][time][realImag] = filteredData[input][time][realImag][channel];
-                        }
+                    if (bandpass_correction) {
+                        correctedData[channel][input][time][REAL] = bandPassCorrectionWeights[channel] * filteredData[input][time][channel].real();
+                        correctedData[channel][input][time][IMAG] = bandPassCorrectionWeights[channel] * filteredData[input][time][channel].imag();
+                    } else {
+                        correctedData[channel][input][time][REAL] = filteredData[input][time][channel].real();
+                        correctedData[channel][input][time][IMAG] = filteredData[input][time][channel].imag();
                     }
                 }
             }
@@ -400,8 +395,7 @@ static CorrectedDataType
 testTranspose(FilteredDataType& filteredData)
 {
     if (NR_INPUTS > 22 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 5) {
-        filteredData[22][99][REAL][5] = 2;
-        filteredData[22][99][IMAG][5] = 3;
+        filteredData[22][99][5] = {2, 3};
     }
 
     BandPassCorrectionWeights bandPassCorrectionWeights(BandPassCorrectionWeightsDims);
@@ -468,7 +462,11 @@ fused_FIRfilter
                 for (unsigned tap = 0; tap < NR_TAPS; tap ++)
                     sum += filterWeights[tap][channel] * history[real_imag][(minorTime + tap) % NR_TAPS][channel];
 
-                filteredData[minorTime][real_imag][channel] = sum;
+                if (real_imag == IMAG) {
+                    filteredData[minorTime][channel] = {filteredData[minorTime][channel].real(), sum};
+                } else {
+                    filteredData[minorTime][channel] = {sum, filteredData[minorTime][channel].imag()};
+                }
             }
         }
     }
@@ -478,10 +476,8 @@ fused_FIRfilter
 static void
 fused_FFT(FusedFilterType& filteredData)
 {
-    //  for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++)
-    //  DftiComputeForward(handle, filteredData[minorTime][REAL], filteredData[minorTime][IMAG]);
     // Do batch FFT instead of for-loop
-    DftiComputeForward(handle, filteredData[0][REAL].origin(), filteredData[0][IMAG].origin());
+    DftiComputeForward(handle, filteredData[0].origin());
 }
 
 
@@ -532,9 +528,9 @@ fused_Transpose
 
         for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
-                    filteredData[minorTime][real_imag][channel] *= bandPassCorrectionWeights[channel];
-                }
+                float real = filteredData[minorTime][channel].real() * bandPassCorrectionWeights[channel];
+                float imag = filteredData[minorTime][channel].imag() * bandPassCorrectionWeights[channel];
+                filteredData[minorTime][channel] = {real, imag};
             }
         }
     }
@@ -543,8 +539,8 @@ fused_Transpose
 
     for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
         for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
-            float sample_r = filteredData[minorTime][REAL][channel];
-            float sample_i = filteredData[minorTime][IMAG][channel];
+            float sample_r = filteredData[minorTime][channel].real();
+            float sample_i = filteredData[minorTime][channel].imag();
 
             if (delay_compensation) {
                 cmul(sample_r, sample_i, sample_r, sample_i, v[REAL][channel], v[IMAG][channel]);
