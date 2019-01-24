@@ -13,7 +13,7 @@ else
     PRINTF := @printf
 endif
 
-WARNINGS := -Wall -Wextra -Wno-unknown-pragmas -std=c++17
+WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wno-unknown-pragmas -std=c++17
 
 ifeq ($(CXX), clang++)
     WARNINGS+=-Wno-sizeof-array-argument -Wno-sizeof-pointer-memaccess -Wno-unused-parameter

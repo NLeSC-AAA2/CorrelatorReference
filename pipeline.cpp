@@ -18,7 +18,7 @@
 #define NR_SAMPLES_PER_CHANNEL		3072
 #endif
 
-#define SUBBAND_BANDWIDTH		195312.5
+#define SUBBAND_BANDWIDTH		195312.5f
 
 #if defined __AVX512F__ || defined __MIC__
 #undef USE_FUSED_FILTER
@@ -85,12 +85,12 @@ std::ostream& cerr = std::cerr;
 std::ostream& clog = std::clog;
 
 
-static inline uint64_t rdtsc()
+static inline double rdtsc()
 {
   unsigned low, high;
 
   __asm__ __volatile__ ("rdtsc" : "=a" (low), "=d" (high));
-  return ((unsigned long long) high << 32) | low;
+  return static_cast<double>(((unsigned long long) high << 32) | low);
 }
 
 
@@ -600,7 +600,7 @@ static void filter(FilteredDataType filteredData, const InputDataType inputData,
 
 	    __m256 sum = _mm256_setzero_ps();
 
-	    for (int tap = 0; tap < NR_TAPS; tap ++) {
+	    for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
 	      __m256 weights = _mm256_load_ps(&filterWeights[tap][channelBase]);
 	      __m256 samples = _mm256_load_ps(&history[real_imag][(time + tap) % NR_TAPS][channelBase]);
 #if defined __AVX2__
@@ -1079,7 +1079,7 @@ static void transpose(
 #if defined DELAY_COMPENSATION
 
 #if defined CORRECTNESS_TEST
-static void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin, const DelaysType delaysAfterEnd, double subbandFrequency, unsigned)
+static void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin, const DelaysType delaysAfterEnd, float subbandFrequency, unsigned)
 {
 #pragma omp parallel
   {
@@ -1095,12 +1095,12 @@ static void applyDelays(CorrectedDataType correctedData, const DelaysType delays
 	  unsigned input = inputMajor * VECTOR_SIZE + inputMinor;
 
 	  if (NR_INPUTS % VECTOR_SIZE == 0 || input < NR_INPUTS) {
-	    double phiBegin = -2 * 3.141592653589793 * delaysAtBegin[input];
-	    double phiEnd   = -2 * 3.141592653589793 * delaysAfterEnd[input];
+	    double phiBegin = -2.0 * 3.141592653589793 * delaysAtBegin[input];
+	    double phiEnd   = -2.0 * 3.141592653589793 * delaysAfterEnd[input];
 	    double deltaPhi = (phiEnd - phiBegin) / NR_SAMPLES_PER_CHANNEL;
-	    double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * ((double) SUBBAND_BANDWIDTH / NR_CHANNELS);
-	    float myPhiBegin = (phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */;
-	    float myPhiDelta	= deltaPhi * channelFrequency;
+	    double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * (SUBBAND_BANDWIDTH / NR_CHANNELS);
+	    float myPhiBegin = static_cast<float>((phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */);
+	    float myPhiDelta	= static_cast<float>(deltaPhi * channelFrequency);
 	    sincosf(myPhiBegin, &v_if[inputMinor], &v_rf[inputMinor]);
 	    sincosf(myPhiDelta, &dv_if[inputMinor], &dv_rf[inputMinor]);
 	  }
@@ -1259,7 +1259,7 @@ static void fused_FIRfilterInit(
   float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
   unsigned input,
   unsigned,
-  uint64_t &FIRfilterTime
+  double &FIRfilterTime
 )
 {
   FIRfilterTime -= rdtsc();
@@ -1283,7 +1283,7 @@ static void fused_FIRfilter(
   unsigned input,
   unsigned majorTime,
   unsigned,
-  uint64_t &FIRfilterTime
+  double &FIRfilterTime
 )
 {
   FIRfilterTime -= rdtsc();
@@ -1297,7 +1297,7 @@ static void fused_FIRfilter(
 
 	float sum = 0;
 
-	for (int tap = 0; tap < NR_TAPS; tap ++)
+	for (unsigned tap = 0; tap < NR_TAPS; tap ++)
 	  sum += filterWeights[tap][channel] * history[real_imag][(minorTime + tap) % NR_TAPS][channel];
 
 	filteredData[minorTime][real_imag][channel] = sum;
@@ -1309,7 +1309,7 @@ static void fused_FIRfilter(
 }
 
 
-static void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/, unsigned, uint64_t &FFTtime)
+static void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/, unsigned, double &FFTtime)
 {
   FFTtime -= rdtsc();
 
@@ -1333,27 +1333,27 @@ static void fused_TransposeInit(
 #if defined DELAY_COMPENSATION
   const DelaysType delaysAtBegin,
   const DelaysType delaysAfterEnd,
-  double subbandFrequency,
+  float subbandFrequency,
 #endif
   unsigned input,
   unsigned,
-  uint64_t &trsTime
+  double &trsTime
 )
 {
 #if defined DELAY_COMPENSATION
   trsTime -= rdtsc();
 
   // prepare delay compensation: compute complex weights
-  double phiBegin = -2 * 3.141592653589793 * delaysAtBegin[input];
-  double phiEnd   = -2 * 3.141592653589793 * delaysAfterEnd[input];
+  double phiBegin = -2.0 * 3.141592653589793 * delaysAtBegin[input];
+  double phiEnd   = -2.0 * 3.141592653589793 * delaysAfterEnd[input];
   double deltaPhi = (phiEnd - phiBegin) / NR_SAMPLES_PER_CHANNEL;
 
 #pragma simd
 #pragma vector aligned
   for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-    double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * ((double) SUBBAND_BANDWIDTH / NR_CHANNELS);
-    float myPhiBegin = (phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */;
-    float myPhiDelta = deltaPhi * channelFrequency;
+    double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * (SUBBAND_BANDWIDTH / NR_CHANNELS);
+    float myPhiBegin = static_cast<float>((phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */);
+    float myPhiDelta = static_cast<float>(deltaPhi * channelFrequency);
     sincosf(myPhiBegin, &v[IMAG][channel], &v[REAL][channel]);
     sincosf(myPhiDelta, &dv[IMAG][channel], &dv[REAL][channel]);
 
@@ -1378,7 +1378,7 @@ static void fused_Transpose(
   unsigned input,
   unsigned majorTime,
   unsigned,
-  uint64_t &trsTime
+  double &trsTime
 )
 {
   trsTime -= rdtsc();
@@ -1430,12 +1430,12 @@ static void fused(
 #if defined DELAY_COMPENSATION
   const DelaysType delaysAtBegin,
   const DelaysType delaysAfterEnd,
-  double subbandFrequency,
+  float subbandFrequency,
 #endif
   unsigned iteration,
-  uint64_t &FIRfilterTimeRef, uint64_t &FFTtimeRef, uint64_t &trsTimeRef)
+  double &FIRfilterTimeRef, double &FFTtimeRef, double &trsTimeRef)
 {
-  uint64_t FIRfilterTime = 0, FFTtime = 0, trsTime = 0;
+  double FIRfilterTime = 0, FFTtime = 0, trsTime = 0;
 
 #pragma omp parallel reduction(+: FIRfilterTime, FFTtime, trsTime)
   {
@@ -1514,7 +1514,7 @@ static void checkFusedTestPattern(const CorrectedDataType correctedData)
 static void testFused()
 {
   setFusedTestPattern(inputData[0], filterWeights, bandPassCorrectionWeights, delaysAtBegin[0], delaysAfterEnd[0]);
-  uint64_t FIRfilterTime, FFTtime, trsTime;
+  double FIRfilterTime, FFTtime, trsTime;
 
 #pragma omp target update to(inputData, filterWeights, bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd)
 #pragma omp target
@@ -1904,7 +1904,7 @@ static void correlate(VisibilitiesType visibilities, const CorrectedDataType cor
 #pragma omp for collapse(2) schedule(dynamic)
     for (int channel = 0; channel < NR_CHANNELS; channel ++) {
       for (int block = 0; block < NR_8X8_BLOCKS; block ++) {
-	int blockX = (sqrtf(8 * block + 1) - .99999f) / 2;
+	int blockX = static_cast<int>(sqrtf(8 * static_cast<float>(block) + 1) - .99999f) / 2;
 	int blockY = block - blockX * (blockX + 1) / 2;
 
 #if 0
@@ -2095,11 +2095,11 @@ void pipeline(
 #endif
 
 
-static void pipeline(unsigned stream, double subbandFrequency, unsigned iteration)
+static void pipeline(int stream, float subbandFrequency, unsigned iteration)
 {
   PowerSensor::State powerStates[8];
 #if defined USE_FUSED_FILTER
-  uint64_t FIRfilterTime, FFTtime, trsTime;
+  double FIRfilterTime, FFTtime, trsTime;
 #endif
 
   //powerStates[0] = powerSensor.read();
@@ -2163,7 +2163,7 @@ static void pipeline(unsigned stream, double subbandFrequency, unsigned iteratio
 #pragma omp critical (cout)
   {
     uint64_t nrFIRfilterOperations = NR_SAMPLES * COMPLEX * NR_TAPS * 2;
-    uint64_t nrFFToperations       = NR_SAMPLES * 5 * log2(NR_CHANNELS);
+    uint64_t nrFFToperations       = static_cast<uint64_t>(NR_SAMPLES * 5 * log2(NR_CHANNELS));
 
 #if defined DELAY_COMPENSATION
     uint64_t nrDelayAndBandPassOperations = NR_SAMPLES * 2 * 6;
@@ -2233,7 +2233,7 @@ int main(int, char **)
 
 #pragma omp parallel num_threads(NR_STREAMS)
   {
-    unsigned stream = omp_get_thread_num();
+    int stream = omp_get_thread_num();
 
     setInputTestPattern(inputData[stream]);
 #if defined DELAY_COMPENSATION
