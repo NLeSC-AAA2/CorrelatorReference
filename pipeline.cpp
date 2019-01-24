@@ -1,4 +1,6 @@
 // (C) 2013,2014,2015 John Romein/ASTRON
+// Copyright 2018-2019 Netherlands eScience Center and ASTRON
+// Licensed under the Apache License, version 2.0. See LICENSE for details.
 
 #if defined __AVX512F__
 #define _mm512_storenrngo_ps _mm512_stream_ps
@@ -16,14 +18,11 @@
 #define NR_SAMPLES_PER_CHANNEL		3072
 #endif
 
-#define BANDPASS_CORRECTION
-#define DELAY_COMPENSATION
 #define SUBBAND_BANDWIDTH		195312.5
 
 #if defined __AVX512F__ || defined __MIC__ || defined __INTEL_OFFLOAD
 #undef USE_FUSED_FILTER
 #else
-#define USE_FUSED_FILTER
 #endif
 
 #if defined __INTEL_OFFLOAD
@@ -89,30 +88,24 @@ extern "C" {
 #endif
 
 #if defined __AVX512F__
-#pragma omp declare target
 inline __m512 load_8_bit_samples(const signed char *ptr)
 {
   return _mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(* (const __m128i *) ptr));
 }
 #elif defined __MIC__
-#pragma omp declare target
 inline __m512 load_8_bit_samples(const signed char *ptr)
 {
   return _mm512_extload_ps(ptr, _MM_UPCONV_PS_SINT8, _MM_BROADCAST32_NONE, _MM_HINT_NONE);
 }
 #endif
 
-#pragma omp declare target
 std::ostream& cout = std::cout;
 
-#pragma omp declare target
 std::ostream& cerr = std::cerr;
 
-#pragma omp declare target
 std::ostream& clog = std::clog;
 
 
-#pragma omp declare target
 inline uint64_t rdtsc()
 {
   unsigned low, high;
@@ -155,19 +148,12 @@ typedef float CorrectedDataType[NR_CHANNELS][ALIGN(NR_INPUTS, VECTOR_SIZE) / VEC
 typedef float VisibilitiesType[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
 
-#pragma omp declare target
 static InputDataType inputData[NR_STREAMS];
-#pragma omp declare target
 static FilteredDataType filteredData;
-#pragma omp declare target
 static FilterWeightsType filterWeights;
-#pragma omp declare target
 static BandPassCorrectionWeights bandPassCorrectionWeights;
-#pragma omp declare target
 static DelaysType delaysAtBegin[NR_STREAMS], delaysAfterEnd[NR_STREAMS];
-#pragma omp declare target
 static CorrectedDataType correctedData;
-#pragma omp declare target
 static VisibilitiesType visibilities[NR_STREAMS + 1]; // this is really too much, but avoids a potential segfault on as (masked!!!) vpackstorehps
 static uint64_t totalNrOperations;
 
@@ -195,7 +181,6 @@ std::ostream &operator << (std::ostream &str, __m256 v)
 
 ////// FIR filter
 
-#pragma omp declare target
 void filter(FilteredDataType filteredData, const InputDataType inputData, const FilterWeightsType filterWeights, unsigned iteration)
 {
 #if defined USE_PMC
@@ -753,7 +738,7 @@ void FIR_filter(int stream, unsigned iteration)
 void setInputTestPattern(InputDataType inputData)
 {
 #if 1
-  signed char count;
+  signed char count = 64;
 
   for (unsigned input = 0; input < NR_INPUTS; input ++)
     for (unsigned ri = 0; ri < COMPLEX; ri ++)
@@ -815,11 +800,9 @@ void testFIR_Filter()
 
 ////// FFT
 
-#pragma omp declare target
 DFTI_DESCRIPTOR_HANDLE handle;
 
 
-#pragma omp declare target
 void fftInit()
 {
   MKL_LONG error;
@@ -868,7 +851,6 @@ void fftInit()
 }
 
 
-#pragma omp declare target
 void fftDestroy()
 {
   MKL_LONG error;
@@ -882,7 +864,6 @@ void fftDestroy()
 }
 
 
-#pragma omp declare target
 void FFT(FilteredDataType filteredData, unsigned iteration)
 {
 #if defined USE_PMC
@@ -938,7 +919,6 @@ void FFT(FilteredDataType filteredData, unsigned iteration)
 
 ////// transpose
 
-#pragma omp declare target
 void transpose(
   CorrectedDataType correctedData,
   const FilteredDataType filteredData,
@@ -1244,7 +1224,6 @@ void transpose(
 
 #if defined DELAY_COMPENSATION
 
-#pragma omp declare target
 void applyDelays(CorrectedDataType correctedData, const DelaysType delaysAtBegin, const DelaysType delaysAfterEnd, double subbandFrequency, unsigned iteration)
 {
 #if defined USE_PMC
@@ -1455,7 +1434,6 @@ void testTranspose()
 
 //////
 
-#pragma omp declare target
 template <typename T> inline void cmul(T &c_r, T &c_i, T a_r, T a_i, T b_r, T b_i)
 {
   c_r = a_r * b_r - a_i * b_i;
@@ -1495,7 +1473,6 @@ void fused_FIRfilterInit(
 }
 
 
-#pragma omp declare target
 void fused_FIRfilter(
   const InputDataType inputData,
   float history[COMPLEX][NR_TAPS][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
@@ -1539,7 +1516,6 @@ void fused_FIRfilter(
 }
 
 
-#pragma omp declare target
 void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/, unsigned iteration, uint64_t &FFTtime)
 {
 #if defined USE_LIKWID
@@ -1563,10 +1539,11 @@ void fused_FFT(float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNEL
 }
 
 
-#pragma omp declare target
 void fused_TransposeInit(
+#if defined DELAY_COMPENSATION
   float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
   float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
+#endif
 #if defined BANDPASS_CORRECTION
   const BandPassCorrectionWeights bandPassCorrectionWeights,
 #endif
@@ -1608,12 +1585,13 @@ void fused_TransposeInit(
 }
 
 
-#pragma omp declare target
 void fused_Transpose(
   CorrectedDataType correctedData,
   float filteredData[NR_SAMPLES_PER_MINOR_LOOP][COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
+#if defined DELAY_COMPENSATION
   float v[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
   float dv[COMPLEX][NR_CHANNELS] /*__attribute__((aligned(sizeof(float[VECTOR_SIZE]))))*/,
+#endif
   unsigned input,
   unsigned majorTime,
   unsigned iteration,
@@ -1669,7 +1647,6 @@ void fused_Transpose(
 }
 
 
-#pragma omp declare target
 void fused(
   CorrectedDataType correctedData,
   const InputDataType inputData,
@@ -1704,13 +1681,27 @@ void fused(
       float dv[COMPLEX][NR_CHANNELS] __attribute__((aligned(sizeof(float[VECTOR_SIZE]))));
 #endif
 
-      fused_TransposeInit(v, dv, bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd, subbandFrequency, input, iteration, trsTime);
+      fused_TransposeInit(
+#if defined DELAY_COMPENSATION
+              v, dv,
+#endif
+#if defined BANDPASS_CORRECTION
+              bandPassCorrectionWeights,
+#endif
+#if defined DELAY_COMPENSATION
+              delaysAtBegin, delaysAfterEnd, subbandFrequency,
+#endif
+              input, iteration, trsTime);
       fused_FIRfilterInit(inputData, history, input, iteration, FIRfilterTime);
 
       for (unsigned majorTime = 0; majorTime < NR_SAMPLES_PER_CHANNEL; majorTime += NR_SAMPLES_PER_MINOR_LOOP) {
 	fused_FIRfilter(inputData, history, filteredData, input, majorTime, iteration, FIRfilterTime);
 	fused_FFT(filteredData, iteration, FFTtime);
-	fused_Transpose(correctedData, filteredData, v, dv, input, majorTime, iteration, trsTime);
+	fused_Transpose(correctedData, filteredData,
+#if defined DELAY_COMPENSATION
+                v, dv,
+#endif
+                input, majorTime, iteration, trsTime);
       }
     }
 
@@ -1784,7 +1775,6 @@ void testFused()
 
 #if defined __MIC__ || defined __AVX512F__
 
-#pragma omp declare target
 inline void correlate_column(__m512 &sum_real, __m512 &sum_imag, const float *sample_X_real_ptr, const float *sample_X_imag_ptr, __m512 samples_Y_real, __m512 samples_Y_imag)
 {
 #if defined __MIC__
@@ -1829,7 +1819,6 @@ inline void correlate_column(__m256 &sum_real, __m256 &sum_imag, const float *sa
 
 #if defined __MIC__ || defined __AVX512F__
 
-#pragma omp declare target
 inline void store_unaligned(float *ptr, __m512 value)
 {
 #if defined __MIC__
@@ -1841,7 +1830,6 @@ inline void store_unaligned(float *ptr, __m512 value)
 }
 
 
-#pragma omp declare target
 inline void store_unaligned(float *ptr, __mmask16 mask, __m512 value)
 {
 #if defined __MIC__
@@ -1853,7 +1841,6 @@ inline void store_unaligned(float *ptr, __mmask16 mask, __m512 value)
 }
 
 
-#pragma omp declare target
 inline void write_visibilities(VisibilitiesType visibilities, int channel, int blockX, int blockY, int offset, __m512 sum_real, __m512 sum_imag)
 {
 #if NR_INPUTS % VECTOR_SIZE != 0
@@ -1914,7 +1901,6 @@ inline void write_visibilities(VisibilitiesType visibilities, int channel, int b
 #endif
 
 
-#pragma omp declare target
 void correlate(VisibilitiesType visibilities, const CorrectedDataType correctedData, unsigned iteration)
 {
 #if defined USE_PMC
@@ -2491,7 +2477,6 @@ void pipeline(unsigned stream, double subbandFrequency, unsigned iteration)
 #endif
 
     report("cor", nrCorrelatorOperations, sizeof(CorrectedDataType) + sizeof(VisibilitiesType), powerStates[5], powerStates[6]);
-    cout << std::endl;
   }
 }
 
@@ -2546,6 +2531,9 @@ int main(int argc, char **argv)
 
       pipeline(stream, 60e6, i);
     }
+    cout << std::endl;
+    checkCorrelatorTestPattern(visibilities[stream]);
+
   }
 
   stopState = powerSensor.read();
