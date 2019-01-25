@@ -44,7 +44,7 @@ constexpr int VECTOR_SIZE = 8;
 constexpr int NR_CHANNELS = 64;
 constexpr int NR_SAMPLES_PER_CHANNEL = 3072;
 constexpr uint64_t NR_SAMPLES = NR_INPUTS * NR_SAMPLES_PER_CHANNEL * NR_CHANNELS;
-constexpr float SUBBAND_BANDWIDTH = 195312.5f;
+constexpr double SUBBAND_BANDWIDTH = 195312.5;
 constexpr int NR_TAPS = 16;
 constexpr int NR_BASELINES = NR_INPUTS * (NR_INPUTS + 1) / 2;
 constexpr int NR_SAMPLES_PER_MINOR_LOOP = 64;
@@ -63,7 +63,7 @@ rdtsc()
   unsigned low, high;
 
   __asm__ __volatile__ ("rdtsc" : "=a" (low), "=d" (high));
-  return static_cast<double>(((unsigned long long) high << 32) | low);
+  return static_cast<double>((static_cast<unsigned long long>(high) << 32) | low);
 }
 
 
@@ -74,7 +74,6 @@ typedef float BandPassCorrectionWeights[NR_CHANNELS] __attribute__((aligned(64))
 typedef double DelaysType[NR_INPUTS];
 typedef float CorrectedDataType[NR_CHANNELS][ALIGN(NR_INPUTS, VECTOR_SIZE) / VECTOR_SIZE][NR_SAMPLES_PER_CHANNEL][COMPLEX][VECTOR_SIZE] __attribute__((aligned(64)));
 typedef float VisibilitiesType[NR_CHANNELS][COMPLEX][NR_BASELINES];
-
 
 static bool correctness_test = true;
 static bool use_fused_filter = USE_FUSED_FILTER;
@@ -206,7 +205,7 @@ checkFIR_FilterTestPattern(const FilteredDataType filteredData)
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                if (filteredData[input][time][REAL][channel] != 0 || filteredData[input][time][IMAG][channel] != 0) {
+                if (filteredData[input][time][REAL][channel] != 0.0f || filteredData[input][time][IMAG][channel] != 0.0f) {
                     cout << "input = " << input << ", time = " << time
                          << ", channel = " << channel << ", sample = ("
                          << filteredData[input][time][REAL][channel] << ','
@@ -231,7 +230,7 @@ testFIR_Filter()
 
 ////// FFT
 
-DFTI_DESCRIPTOR_HANDLE handle;
+static DFTI_DESCRIPTOR_HANDLE handle;
 
 
 static void
@@ -353,7 +352,7 @@ applyDelays
 ( CorrectedDataType correctedData
 , const DelaysType delaysAtBegin
 , const DelaysType delaysAfterEnd
-, float subbandFrequency
+, double subbandFrequency
 , unsigned
 )
 {
@@ -443,7 +442,7 @@ checkTransposeTestPattern(const CorrectedDataType correctedData)
     for (int channel = 0; channel < NR_CHANNELS; channel ++)
         for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (int input = 0; input < NR_INPUTS; input ++)
-                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0 || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0) {
+                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0.0f || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0.0f) {
                     cout << "channel = " << channel << ", time = " << time
                          << ", input = " << input << ", value = ("
                          << correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE]
@@ -563,7 +562,7 @@ fused_TransposeInit
 , const BandPassCorrectionWeights bandPassCorrectionWeights
 , const DelaysType delaysAtBegin
 , const DelaysType delaysAfterEnd
-, float subbandFrequency
+, double subbandFrequency
 , unsigned input
 , unsigned
 , double &trsTime
@@ -648,7 +647,7 @@ fused
 , const BandPassCorrectionWeights bandPassCorrectionWeights
 , const DelaysType delaysAtBegin
 , const DelaysType delaysAfterEnd
-, float subbandFrequency
+, double subbandFrequency
 , unsigned iteration
 , double &FIRfilterTimeRef
 , double &FFTtimeRef
@@ -726,7 +725,7 @@ checkFusedTestPattern(const CorrectedDataType correctedData)
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0 || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0) {
+                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0.0f || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0.0f) {
                     cout << "input = " << input << ", time = " << time
                          << ", channel = " << channel << ": ("
                          << correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE]
@@ -810,7 +809,7 @@ checkCorrelatorTestPattern(const VisibilitiesType visibilities)
 {
     for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
         for (unsigned baseline = 0; baseline < NR_BASELINES; baseline ++)
-            if (visibilities[channel][REAL][baseline] != 0 || visibilities[channel][IMAG][baseline] != 0) {
+            if (visibilities[channel][REAL][baseline] != 0.0f || visibilities[channel][IMAG][baseline] != 0.0f) {
                 cout << "channel = " << channel << ", baseline = " << baseline
                      << ", visibility = (" << visibilities[channel][REAL][baseline]
                      << ',' << visibilities[channel][IMAG][baseline] << ')'
@@ -852,7 +851,7 @@ report
 
 
 static void
-pipeline(float subbandFrequency, unsigned iteration)
+pipeline(double subbandFrequency, unsigned iteration)
 {
     double powerStates[8];
     double fusedTime, FIRfilterTime, FFTtime, trsTime;
@@ -905,7 +904,7 @@ pipeline(float subbandFrequency, unsigned iteration)
             nrDelayAndBandPassOperations = NR_SAMPLES * COMPLEX;
         }
 
-        uint64_t nrCorrelatorOperations = (uint64_t) NR_INPUTS * NR_INPUTS / 2 * 8ULL * NR_CHANNELS * NR_SAMPLES_PER_CHANNEL;
+        uint64_t nrCorrelatorOperations = NR_INPUTS * NR_INPUTS / 2 * 8ULL * NR_CHANNELS * NR_SAMPLES_PER_CHANNEL;
         uint64_t nrFusedOperations = nrFIRfilterOperations + nrFFToperations + nrDelayAndBandPassOperations;
 
         totalNrOperations += nrFusedOperations + nrCorrelatorOperations; // is already atomic
@@ -920,9 +919,9 @@ pipeline(float subbandFrequency, unsigned iteration)
             }
             report("del", NR_SAMPLES * 2 * 6, 2 * sizeof(CorrectedDataType), powerStates[4], powerStates[5]);
         } else {
-            report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5], (double) FIRfilterTime / fusedTime);
-            report("FFT", nrFFToperations, 0, powerStates[1], powerStates[5], (double) FFTtime / fusedTime);
-            report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType), powerStates[1], powerStates[5], (double) trsTime / fusedTime);
+            report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5], FIRfilterTime / fusedTime);
+            report("FFT", nrFFToperations, 0, powerStates[1], powerStates[5],  FFTtime / fusedTime);
+            report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType), powerStates[1], powerStates[5], trsTime / fusedTime);
             report("fused", nrFusedOperations, sizeof(InputDataType) + sizeof(CorrectedDataType), powerStates[1], powerStates[5]);
         }
 
@@ -936,7 +935,7 @@ int main(int, char **)
     static_assert(NR_CHANNELS % 16 == 0);
     static_assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);
 
-    double startState;
+    double startState = 0.0;
     double stopState;
 
     fftInit();

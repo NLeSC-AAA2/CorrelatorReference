@@ -1,4 +1,5 @@
 -DCORRECTNESS_TEST
--mavx
 -fopenmp
 -isystem/cm/shared/apps/intel/composer_xe/2015.5.223/mkl/include/
+-Wno-shadow
+-Wno-disabled-macro-expansion
