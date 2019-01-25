@@ -190,12 +190,13 @@ checkFIR_FilterTestPattern(const FilteredDataType filteredData)
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                if (filteredData[input][time][REAL][channel] != 0 || filteredData[input][time][IMAG][channel] != 0)
+                if (filteredData[input][time][REAL][channel] != 0 || filteredData[input][time][IMAG][channel] != 0) {
                     cout << "input = " << input << ", time = " << time
                          << ", channel = " << channel << ", sample = ("
                          << filteredData[input][time][REAL][channel] << ','
                          << filteredData[input][time][IMAG][channel] << ')'
                          << std::endl;
+                }
 }
 
 
@@ -442,12 +443,13 @@ checkTransposeTestPattern(const CorrectedDataType correctedData)
     for (int channel = 0; channel < NR_CHANNELS; channel ++)
         for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (int input = 0; input < NR_INPUTS; input ++)
-                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0 || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0)
+                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0 || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0) {
                     cout << "channel = " << channel << ", time = " << time
                          << ", input = " << input << ", value = ("
                          << correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE]
                          << ',' << correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE]
                          << ')' << std::endl;
+                }
 }
 
 
@@ -753,12 +755,13 @@ checkFusedTestPattern(const CorrectedDataType correctedData)
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0 || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0)
+                if (correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE] != 0 || correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE] != 0) {
                     cout << "input = " << input << ", time = " << time
                          << ", channel = " << channel << ": ("
                          << correctedData[channel][input / VECTOR_SIZE][time][REAL][input % VECTOR_SIZE]
                          << ", " << correctedData[channel][input / VECTOR_SIZE][time][IMAG][input % VECTOR_SIZE]
                          << ')' << std::endl;
+                }
 }
 
 
@@ -842,11 +845,12 @@ checkCorrelatorTestPattern(const VisibilitiesType visibilities)
 {
     for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
         for (unsigned baseline = 0; baseline < NR_BASELINES; baseline ++)
-            if (visibilities[channel][REAL][baseline] != 0 || visibilities[channel][IMAG][baseline] != 0)
+            if (visibilities[channel][REAL][baseline] != 0 || visibilities[channel][IMAG][baseline] != 0) {
                 cout << "channel = " << channel << ", baseline = " << baseline
                      << ", visibility = (" << visibilities[channel][REAL][baseline]
                      << ',' << visibilities[channel][IMAG][baseline] << ')'
                      << std::endl;
+            }
 }
 
 
