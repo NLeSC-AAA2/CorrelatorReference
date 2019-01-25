@@ -19,6 +19,13 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#ifdef USE_FUSED_FILTER
+#undef USE_FUSED_FILTER
+#define USE_FUSED_FILTER true
+#else
+#define USE_FUSED_FILTER false
+#endif
+
 constexpr int NR_INPUTS = 2 * 576;
 constexpr int VECTOR_SIZE = 8;
 
@@ -59,10 +66,11 @@ typedef float CorrectedDataType[NR_CHANNELS][ALIGN(NR_INPUTS, VECTOR_SIZE) / VEC
 typedef float VisibilitiesType[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
 
+static bool correctness_test = true;
+static bool use_fused_filter = USE_FUSED_FILTER;
+
 static InputDataType inputData;
-#if defined CORRECTNESS_TEST
 static FilteredDataType filteredData;
-#endif
 static FilterWeightsType filterWeights;
 static BandPassCorrectionWeights bandPassCorrectionWeights;
 static DelaysType delaysAtBegin, delaysAfterEnd;
@@ -73,7 +81,6 @@ static uint64_t totalNrOperations;
 
 ////// FIR filter
 
-#if defined CORRECTNESS_TEST
 static void
 setInputTestPattern(InputDataType inputData)
 {
@@ -163,17 +170,14 @@ filter
 static void
 copyInputData()
 {
-#if !defined CORRECTNESS_TEST
-    double start_time = omp_get_wtime();
-#endif
-
-#if !defined CORRECTNESS_TEST
-    double copy_time = omp_get_wtime() - start_time;
+    if (!correctness_test) {
+        double start_time = omp_get_wtime();
+        double copy_time = omp_get_wtime() - start_time;
 
 #pragma omp critical (cout)
-    cout << "input data: time = " << copy_time << "s (total), " << "BW = "
-         << sizeof(InputDataType) / copy_time / 1e9 << " GB/s" << std::endl;
-#endif
+        cout << "input data: time = " << copy_time << "s (total), " << "BW = "
+             << sizeof(InputDataType) / copy_time / 1e9 << " GB/s" << std::endl;
+    }
 }
 
 
@@ -211,7 +215,6 @@ testFIR_Filter()
 
     checkFIR_FilterTestPattern(filteredData);
 }
-#endif
 
 
 ////// FFT
@@ -282,7 +285,6 @@ fftDestroy()
 }
 
 
-#if !defined USE_FUSED_FILTER
 static void
 FFT(FilteredDataType filteredData, unsigned)
 {
@@ -296,12 +298,10 @@ FFT(FilteredDataType filteredData, unsigned)
                 DftiComputeForward(handle, filteredData[input][time][REAL], filteredData[input][time][IMAG]);
     }
 }
-#endif
 
 
 ////// transpose
 
-#if defined CORRECTNESS_TEST
 static void
 transpose
 ( CorrectedDataType correctedData
@@ -336,11 +336,9 @@ transpose
         }
     }
 }
-#endif
 
 
 #if defined DELAY_COMPENSATION
-#if defined CORRECTNESS_TEST
 static void
 applyDelays
 ( CorrectedDataType correctedData
@@ -397,7 +395,6 @@ applyDelays
     }
 }
 #endif
-#endif
 
 
 #if defined BANDPASS_CORRECTION
@@ -426,7 +423,6 @@ setDelaysTestPattern(DelaysType delaysAtBegin, DelaysType delaysAfterEnd)
 #endif
 
 
-#if defined CORRECTNESS_TEST
 static void
 setTransposeTestPattern(FilteredDataType filteredData)
 {
@@ -472,7 +468,6 @@ testTranspose()
 
     checkTransposeTestPattern(correctedData);
 }
-#endif
 
 
 //////
@@ -720,7 +715,6 @@ fused
 }
 
 
-#if defined CORRECTNESS_TEST
 static void
 setFusedTestPattern
 ( InputDataType inputData
@@ -784,7 +778,6 @@ testFused()
 
     checkFusedTestPattern(correctedData);
 }
-#endif
 
 
 
@@ -827,7 +820,6 @@ correlate
 }
 
 
-#if defined CORRECTNESS_TEST
 static void
 setCorrelatorTestPattern(CorrectedDataType correctedData)
 {
@@ -863,7 +855,6 @@ testCorrelator()
 
     checkCorrelatorTestPattern(visibilities);
 }
-#endif
 
 
 static void
@@ -876,21 +867,14 @@ report
 , double weight = 1
 )
 {
-#if defined CORRECTNESS_TEST
-    (void) msg;
-    (void) nrOperations;
-    (void) nrBytes;
-    (void) startState;
-    (void) stopState;
-    (void) weight;
-#else
-    double runTime = (stopState - startState) * weight;
+    if (!correctness_test) {
+        double runTime = (stopState - startState) * weight;
 
-    cout << msg << ": " << runTime << " s, "
-    << nrOperations * 1e-12 / runTime << " TFLOPS, "
-    << nrBytes * 1e-9 / runTime << " GB/s"
-    << std::endl;
-#endif
+        cout << msg << ": " << runTime << " s, "
+             << static_cast<double>(nrOperations) * 1e-12 / runTime
+             << " TFLOPS, " << static_cast<double>(nrBytes) * 1e-9 / runTime
+             << " GB/s" << std::endl;
+    }
 }
 
 
@@ -898,45 +882,43 @@ static void
 pipeline(float subbandFrequency, unsigned iteration)
 {
     double powerStates[8];
-#if defined USE_FUSED_FILTER
-    double FIRfilterTime, FFTtime, trsTime;
-#endif
+    double fusedTime, FIRfilterTime, FFTtime, trsTime;
+    fusedTime = FIRfilterTime = FFTtime = trsTime = 0;
 
 #pragma omp critical (XeonPhi)
     {
         powerStates[1] = omp_get_wtime();
 
-#if !defined USE_FUSED_FILTER
-        filter(filteredData, inputData, filterWeights, iteration);
+        if (!use_fused_filter) {
+            filter(filteredData, inputData, filterWeights, iteration);
 
-        powerStates[2] = omp_get_wtime();
+            powerStates[2] = omp_get_wtime();
 
-        FFT(filteredData, iteration);
+            FFT(filteredData, iteration);
 
-        powerStates[3] = omp_get_wtime();
+            powerStates[3] = omp_get_wtime();
 
 #if defined BANDPASS_CORRECTION
-        transpose(correctedData, filteredData, bandPassCorrectionWeights, iteration);
+            transpose(correctedData, filteredData, bandPassCorrectionWeights, iteration);
 #else
-        transpose(correctedData, filteredData, iteration);
+            transpose(correctedData, filteredData, iteration);
 #endif
 
-        powerStates[4] = omp_get_wtime();
+            powerStates[4] = omp_get_wtime();
 
 #if defined DELAY_COMPENSATION
-        applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency, iteration);
+            applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency, iteration);
 #endif
-
-#else
-        fused(correctedData, inputData, filterWeights,
+        } else {
+            fused(correctedData, inputData, filterWeights,
 #if defined BANDPASS_CORRECTION
-                bandPassCorrectionWeights,
+                    bandPassCorrectionWeights,
 #endif
 #if defined DELAY_COMPENSATION
-                delaysAtBegin, delaysAfterEnd, subbandFrequency,
+                    delaysAtBegin, delaysAfterEnd, subbandFrequency,
 #endif
-                iteration, FIRfilterTime, FFTtime, trsTime);
-#endif
+                    iteration, FIRfilterTime, FFTtime, trsTime);
+        }
 
         powerStates[5] = omp_get_wtime();
 
@@ -961,28 +943,24 @@ pipeline(float subbandFrequency, unsigned iteration)
 
         uint64_t nrCorrelatorOperations = (uint64_t) NR_INPUTS * NR_INPUTS / 2 * 8ULL * NR_CHANNELS * NR_SAMPLES_PER_CHANNEL;
         uint64_t nrFusedOperations = nrFIRfilterOperations + nrFFToperations + nrDelayAndBandPassOperations;
-#if defined USE_FUSED_FILTER
-        double fusedTime = FIRfilterTime + FFTtime + trsTime;
-#endif
 
         totalNrOperations += nrFusedOperations + nrCorrelatorOperations; // is already atomic
 
-#if !defined USE_FUSED_FILTER
-        report("FIR", nrFIRfilterOperations, sizeof(InputDataType) + sizeof(FilteredDataType), powerStates[1], powerStates[2]);
-        report("FFT", nrFFToperations, 2 * sizeof(FilteredDataType), powerStates[2], powerStates[3]);
+        if (!use_fused_filter) {
+            report("FIR", nrFIRfilterOperations, sizeof(InputDataType) + sizeof(FilteredDataType), powerStates[1], powerStates[2]);
+            report("FFT", nrFFToperations, 2 * sizeof(FilteredDataType), powerStates[2], powerStates[3]);
 #if defined BANDPASS_CORRECTION
-        report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
+            report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
 #else
-        report("trs", 0, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
+            report("trs", 0, sizeof(FilteredDataType) + sizeof(CorrectedDataType), powerStates[3], powerStates[4]);
 #endif
-        report("del", NR_SAMPLES * 2 * 6, 2 * sizeof(CorrectedDataType), powerStates[4], powerStates[5]);
-#else
-
-        report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5], (double) FIRfilterTime / fusedTime);
-        report("FFT", nrFFToperations, 0, powerStates[1], powerStates[5], (double) FFTtime / fusedTime);
-        report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType), powerStates[1], powerStates[5], (double) trsTime / fusedTime);
-        report("fused", nrFusedOperations, sizeof(InputDataType) + sizeof(CorrectedDataType), powerStates[1], powerStates[5]);
-#endif
+            report("del", NR_SAMPLES * 2 * 6, 2 * sizeof(CorrectedDataType), powerStates[4], powerStates[5]);
+        } else {
+            report("FIR", nrFIRfilterOperations, sizeof(InputDataType), powerStates[1], powerStates[5], (double) FIRfilterTime / fusedTime);
+            report("FFT", nrFFToperations, 0, powerStates[1], powerStates[5], (double) FFTtime / fusedTime);
+            report("trs", nrDelayAndBandPassOperations, sizeof(FilteredDataType), powerStates[1], powerStates[5], (double) trsTime / fusedTime);
+            report("fused", nrFusedOperations, sizeof(InputDataType) + sizeof(CorrectedDataType), powerStates[1], powerStates[5]);
+        }
 
         report("cor", nrCorrelatorOperations, sizeof(CorrectedDataType) + sizeof(VisibilitiesType), powerStates[5], powerStates[6]);
     }
@@ -991,22 +969,21 @@ pipeline(float subbandFrequency, unsigned iteration)
 
 int main(int, char **)
 {
-    assert(NR_CHANNELS % 16 == 0);
-    assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);
+    static_assert(NR_CHANNELS % 16 == 0);
+    static_assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);
 
     double startState;
-#if !defined CORRECTNESS_TEST
     double stopState;
-#endif
 
     fftInit();
 
-#if defined CORRECTNESS_TEST
-    testFused();
-    testFIR_Filter();
-    testTranspose();
-    testCorrelator();
-#endif
+    if (correctness_test) {
+        testFused();
+        testFIR_Filter();
+        testTranspose();
+        testCorrelator();
+    }
+
     omp_set_nested(1);
 
 #if defined BANDPASS_CORRECTION
@@ -1031,18 +1008,17 @@ int main(int, char **)
 
             pipeline(60e6, i);
         }
-
-        cout << std::endl;
-        checkCorrelatorTestPattern(visibilities);
     }
+    cout << std::endl;
+    checkCorrelatorTestPattern(visibilities);
 
-#if !defined CORRECTNESS_TEST
-    stopState = omp_get_wtime();
+    if (!correctness_test) {
+        stopState = omp_get_wtime();
 
-    cout << "total: " << stopState - startState << " s"
-         << ", " << totalNrOperations / (stopState - startState) * 1e-12
-         << " TFLOPS" << std::endl;
-#endif
+        cout << "total: " << stopState - startState << " s" << ", "
+             << static_cast<double>(totalNrOperations) / (stopState - startState) * 1e-12
+             << " TFLOPS" << std::endl;
+    }
 
     fftDestroy();
     return 0;

@@ -50,7 +50,7 @@ pipeline-%.o: CFLAGS+=$(call if-contains,$*,fused,-DUSE_FUSED_FILTER) \
 
 pipeline-%.o: pipeline.cpp
 	$(PRINTF) " CC $<\n"
-	$(AT)$(CXX) $(CFLAGS) -DCORRECTNESS_TEST -mcmodel=large -fopenmp -g -O3 -c -o $@ $<
+	$(AT)$(CXX) $(CFLAGS) -mcmodel=large -fopenmp -g -O3 -c -o $@ $<
 
 pipeline-%: pipeline-%.o
 	$(PRINTF) " LD $@\n"
