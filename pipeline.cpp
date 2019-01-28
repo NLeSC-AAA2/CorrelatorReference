@@ -53,6 +53,7 @@ constexpr int IMAG = 1;
 constexpr int COMPLEX = 2;
 
 using std::cout, std::cerr;
+using namespace std::complex_literals;
 
 typedef boost::multi_array<int8_t, 4> InputDataType;
 static const auto InputDataDims = boost::extents[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS];
@@ -179,11 +180,10 @@ checkFIR_FilterTestPattern(const FilteredDataType& filteredData)
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                if (filteredData[input][time][channel].real() != 0.0f || filteredData[input][time][channel].imag() != 0.0f) {
+                if (filteredData[input][time][channel] != (0.0f + 0.0if)) {
                     cout << "input = " << input << ", time = " << time
-                         << ", channel = " << channel << ", sample = ("
-                         << filteredData[input][time][channel].real() << ','
-                         << filteredData[input][time][channel].imag() << ')'
+                         << ", channel = " << channel << ", sample = "
+                         << filteredData[input][time][channel]
                          << std::endl;
                 }
 }
@@ -386,12 +386,11 @@ checkTransposeTestPattern(const CorrectedDataType& correctedData)
     for (int channel = 0; channel < NR_CHANNELS; channel ++)
         for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (int input = 0; input < NR_INPUTS; input ++)
-                if (correctedData[channel][input][time].real() != 0.0f || correctedData[channel][input][time].imag() != 0.0f) {
+                if (correctedData[channel][input][time] != (0.0f + 0.0if)) {
                     cout << "channel = " << channel << ", time = " << time
-                         << ", input = " << input << ", value = ("
-                         << correctedData[channel][input][time].real()
-                         << ',' << correctedData[channel][input][time].imag()
-                         << ')' << std::endl;
+                         << ", input = " << input << ", value = "
+                         << correctedData[channel][input][time]
+                         << std::endl;
                 }
 }
 
@@ -608,7 +607,7 @@ checkFusedTestPattern(const CorrectedDataType& correctedData)
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                if (correctedData[channel][input][time].real() != 0.0f || correctedData[channel][input][time].imag() != 0.0f) {
+                if (correctedData[channel][input][time] != (0.0f + 0.0if)) {
                     cout << "input = " << input << ", time = " << time
                          << ", channel = " << channel << ": ("
                          << correctedData[channel][input][time].real()
@@ -673,10 +672,9 @@ checkCorrelatorTestPattern(const VisibilitiesType& visibilities)
 {
     for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
         for (unsigned baseline = 0; baseline < NR_BASELINES; baseline ++)
-            if (visibilities[channel][baseline].real() != 0.0f || visibilities[channel][baseline].imag() != 0.0f) {
+            if (visibilities[channel][baseline] != (0.0f + 0.0if)) {
                 cout << "channel = " << channel << ", baseline = " << baseline
-                     << ", visibility = (" << visibilities[channel][baseline].real()
-                     << ',' << visibilities[channel][baseline].imag() << ')'
+                     << ", visibility = " << visibilities[channel][baseline]
                      << std::endl;
             }
 }
