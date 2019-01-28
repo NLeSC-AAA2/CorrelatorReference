@@ -64,8 +64,8 @@ typedef boost::multi_array<float, 1> BandPassCorrectionWeights;
 static const auto BandPassCorrectionWeightsDims = boost::extents[NR_CHANNELS];
 typedef boost::multi_array<double, 1> DelaysType;
 static const auto DelaysDims = boost::extents[NR_INPUTS];
-typedef boost::multi_array<float, 4> CorrectedDataType;
-static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS][NR_SAMPLES_PER_CHANNEL][COMPLEX];
+typedef boost::multi_array<std::complex<float>, 3> CorrectedDataType;
+static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS][NR_SAMPLES_PER_CHANNEL];
 typedef boost::multi_array<float, 3> VisibilitiesType;
 static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][COMPLEX][NR_BASELINES];
 
@@ -285,13 +285,16 @@ transpose
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
             for (unsigned input = 0; input < NR_INPUTS; input ++) {
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
+                    float real = filteredData[input][time][channel].real();
+                    float imag = filteredData[input][time][channel].imag();
+
                     if (bandpass_correction) {
-                        correctedData[channel][input][time][REAL] = bandPassCorrectionWeights[channel] * filteredData[input][time][channel].real();
-                        correctedData[channel][input][time][IMAG] = bandPassCorrectionWeights[channel] * filteredData[input][time][channel].imag();
-                    } else {
-                        correctedData[channel][input][time][REAL] = filteredData[input][time][channel].real();
-                        correctedData[channel][input][time][IMAG] = filteredData[input][time][channel].imag();
+                        real *= bandPassCorrectionWeights[channel];
+                        imag *= bandPassCorrectionWeights[channel];
+
                     }
+
+                    correctedData[channel][input][time] = {real, imag};
                 }
             }
         }
@@ -329,8 +332,8 @@ applyDelays
                 sincosf(myPhiDelta, &dv_if, &dv_rf);
 
                 for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                    float sample_r = correctedData[channel][input][time][REAL];
-                    float sample_i = correctedData[channel][input][time][IMAG];
+                    float sample_r = correctedData[channel][input][time].real();
+                    float sample_i = correctedData[channel][input][time].imag();
 
                     float tmp = sample_r * v_if;
                     sample_r = (sample_r * v_rf) - (sample_i * v_if);
@@ -340,8 +343,7 @@ applyDelays
                     v_rf = (v_rf * dv_rf) - (v_if * dv_if);
                     v_if = (v_if * dv_rf) + tmp;
 
-                    correctedData[channel][input][time][REAL] = sample_r;
-                    correctedData[channel][input][time][IMAG] = sample_i;
+                    correctedData[channel][input][time] = {sample_r, sample_i};
                 }
             }
         }
@@ -381,11 +383,11 @@ checkTransposeTestPattern(const CorrectedDataType& correctedData)
     for (int channel = 0; channel < NR_CHANNELS; channel ++)
         for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (int input = 0; input < NR_INPUTS; input ++)
-                if (correctedData[channel][input][time][REAL] != 0.0f || correctedData[channel][input][time][IMAG] != 0.0f) {
+                if (correctedData[channel][input][time].real() != 0.0f || correctedData[channel][input][time].imag() != 0.0f) {
                     cout << "channel = " << channel << ", time = " << time
                          << ", input = " << input << ", value = ("
-                         << correctedData[channel][input][time][REAL]
-                         << ',' << correctedData[channel][input][time][IMAG]
+                         << correctedData[channel][input][time].real()
+                         << ',' << correctedData[channel][input][time].imag()
                          << ')' << std::endl;
                 }
 }
@@ -547,8 +549,7 @@ fused_Transpose
                 cmul(v[REAL][channel], v[IMAG][channel], v[REAL][channel], v[IMAG][channel], dv[REAL][channel], dv[IMAG][channel]);
             }
 
-            correctedData[channel][input][majorTime + minorTime][REAL] = sample_r;
-            correctedData[channel][input][majorTime + minorTime][IMAG] = sample_i;
+            correctedData[channel][input][majorTime + minorTime] = {sample_r, sample_i};
         }
     }
 }
@@ -603,11 +604,11 @@ checkFusedTestPattern(const CorrectedDataType& correctedData)
     for (unsigned input = 0; input < NR_INPUTS; input ++)
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++)
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                if (correctedData[channel][input][time][REAL] != 0.0f || correctedData[channel][input][time][IMAG] != 0.0f) {
+                if (correctedData[channel][input][time].real() != 0.0f || correctedData[channel][input][time].imag() != 0.0f) {
                     cout << "input = " << input << ", time = " << time
                          << ", channel = " << channel << ": ("
-                         << correctedData[channel][input][time][REAL]
-                         << ", " << correctedData[channel][input][time][IMAG]
+                         << correctedData[channel][input][time].real()
+                         << ", " << correctedData[channel][input][time].imag()
                          << ')' << std::endl;
                 }
 }
@@ -641,10 +642,10 @@ correlate(const CorrectedDataType& correctedData)
                     float sum_real = 0, sum_imag = 0;
 
                     for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                        float sample_X_real = correctedData[channel][statX][time][REAL];
-                        float sample_X_imag = correctedData[channel][statX][time][IMAG];
-                        float sample_Y_real = correctedData[channel][statY][time][REAL];
-                        float sample_Y_imag = correctedData[channel][statY][time][IMAG];
+                        float sample_X_real = correctedData[channel][statX][time].real();
+                        float sample_X_imag = correctedData[channel][statX][time].imag();
+                        float sample_Y_real = correctedData[channel][statY][time].real();
+                        float sample_Y_imag = correctedData[channel][statY][time].imag();
 
                         sum_real += sample_Y_real * sample_X_real;
                         sum_imag += sample_Y_imag * sample_X_real;
@@ -682,10 +683,8 @@ static void
 testCorrelator(CorrectedDataType& correctedData)
 {
     if constexpr (NR_CHANNELS > 5 && NR_SAMPLES_PER_CHANNEL > 99 && NR_INPUTS > 19) {
-        correctedData[5][ 0][99][REAL] = 3;
-        correctedData[5][ 0][99][IMAG] = 4;
-        correctedData[5][18][99][REAL] = 5;
-        correctedData[5][18][99][IMAG] = 6;
+        correctedData[5][ 0][99] = {3,4};
+        correctedData[5][18][99] = {5,6};
     }
 
     auto visibilities = correlate(correctedData);
