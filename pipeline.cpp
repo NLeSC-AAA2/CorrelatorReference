@@ -74,8 +74,8 @@ typedef boost::multi_array<std::complex<float>, 2> HistoryType;
 static const auto HistoryDims = boost::extents[NR_TAPS][NR_CHANNELS];
 typedef boost::multi_array<std::complex<float>, 2> FusedFilterType;
 static const auto FusedFilterDims = boost::extents[NR_SAMPLES_PER_MINOR_LOOP][NR_CHANNELS];
-typedef boost::multi_array<float, 2> ComplexChannelType;
-static const auto ComplexChannelDims = boost::extents[COMPLEX][NR_CHANNELS];
+typedef boost::multi_array<std::complex<float>, 1> ComplexChannelType;
+static const auto ComplexChannelDims = boost::extents[NR_CHANNELS];
 
 static bool use_fused_filter = USE_FUSED_FILTER;
 static bool delay_compensation = DELAY_COMPENSATION;
@@ -156,15 +156,11 @@ FIR_filter
                     imag = inputData[input][IMAG][time + NR_TAPS - 1][channel];
                     history[(time - 1) % NR_TAPS][channel] = {real, imag};
 
-                    float sumr = 0;
-                    float sumi = 0;
+                    filteredData[input][time][channel] = {0, 0};
 
                     for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
-                        sumr += filterWeights[tap][channel] * history[(time + tap) % NR_TAPS][channel].real();
-                        sumi += filterWeights[tap][channel] * history[(time + tap) % NR_TAPS][channel].imag();
+                        filteredData[input][time][channel] += filterWeights[tap][channel] * history[(time + tap) % NR_TAPS][channel];
                     }
-
-                    filteredData[input][time][channel] = {sumr, sumi};
                 }
             }
         }
@@ -288,16 +284,11 @@ transpose
         for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
             for (unsigned input = 0; input < NR_INPUTS; input ++) {
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                    float real = filteredData[input][time][channel].real();
-                    float imag = filteredData[input][time][channel].imag();
+                    correctedData[channel][input][time] = filteredData[input][time][channel];
 
                     if (bandpass_correction) {
-                        real *= bandPassCorrectionWeights[channel];
-                        imag *= bandPassCorrectionWeights[channel];
-
+                        correctedData[channel][input][time] *= bandPassCorrectionWeights[channel];
                     }
-
-                    correctedData[channel][input][time] = {real, imag};
                 }
             }
         }
@@ -320,33 +311,18 @@ applyDelays
 #pragma omp for collapse(2)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                float v_rf;
-                float v_if;
-                float dv_rf;
-                float dv_if;
-
                 double phiBegin = -2.0 * 3.141592653589793 * delaysAtBegin[input];
                 double phiEnd   = -2.0 * 3.141592653589793 * delaysAfterEnd[input];
                 double deltaPhi = (phiEnd - phiBegin) / NR_SAMPLES_PER_CHANNEL;
                 double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * (SUBBAND_BANDWIDTH / NR_CHANNELS);
                 float myPhiBegin = static_cast<float>((phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */);
                 float myPhiDelta = static_cast<float>(deltaPhi * channelFrequency);
-                sincosf(myPhiBegin, &v_if, &v_rf);
-                sincosf(myPhiDelta, &dv_if, &dv_rf);
+                std::complex<float> v = std::polar(1.0f, myPhiBegin);
+                std::complex<float> dv = std::polar(1.0f, myPhiDelta);
 
                 for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                    float sample_r = correctedData[channel][input][time].real();
-                    float sample_i = correctedData[channel][input][time].imag();
-
-                    float tmp = sample_r * v_if;
-                    sample_r = (sample_r * v_rf) - (sample_i * v_if);
-                    sample_i = (sample_i * v_rf) + tmp;
-
-                    tmp = v_rf * dv_if;
-                    v_rf = (v_rf * dv_rf) - (v_if * dv_if);
-                    v_if = (v_if * dv_rf) + tmp;
-
-                    correctedData[channel][input][time] = {sample_r, sample_i};
+                    correctedData[channel][input][time] *= v;
+                    v *= dv;
                 }
             }
         }
@@ -420,15 +396,6 @@ testTranspose(FilteredDataType& filteredData)
 
 //////
 
-template <typename T>
-static inline void
-cmul(T &c_r, T &c_i, T a_r, T a_i, T b_r, T b_i)
-{
-    c_r = a_r * b_r - a_i * b_i;
-    c_i = a_r * b_i + a_i * b_r;
-}
-
-
 static void
 fused_FIRfilterInit
 ( const InputDataType& inputData
@@ -464,15 +431,13 @@ fused_FIRfilter
             float imag = inputData[input][IMAG][majorTime + minorTime + NR_TAPS - 1][channel];
             history[(minorTime - 1) % NR_TAPS][channel] = {real, imag};
 
-            float sumr = 0;
-            float sumi = 0;
+            std::complex<float> sum = {0, 0};
 
             for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
-                sumr += filterWeights[tap][channel] * history[(minorTime + tap) % NR_TAPS][channel].real();
-                sumi += filterWeights[tap][channel] * history[(minorTime + tap) % NR_TAPS][channel].imag();
+                sum += filterWeights[tap][channel] * history[(minorTime + tap) % NR_TAPS][channel];
             }
 
-            filteredData[minorTime][channel] = {sumr, sumi};
+            filteredData[minorTime][channel] = sum;
         }
     }
 }
@@ -506,12 +471,11 @@ fused_TransposeInit
         double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * (SUBBAND_BANDWIDTH / NR_CHANNELS);
         float myPhiBegin = static_cast<float>((phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */);
         float myPhiDelta = static_cast<float>(deltaPhi * channelFrequency);
-        sincosf(myPhiBegin, &v[IMAG][channel], &v[REAL][channel]);
-        sincosf(myPhiDelta, &dv[IMAG][channel], &dv[REAL][channel]);
+        v[channel] = std::polar(1.0f, myPhiBegin);
+        dv[channel] = std::polar(1.0f, myPhiDelta);
 
         if (bandpass_correction) {
-            v[REAL][channel] *= bandPassCorrectionWeights[channel];
-            v[IMAG][channel] *= bandPassCorrectionWeights[channel];
+            v[channel] *= bandPassCorrectionWeights[channel];
         }
     }
 }
@@ -533,9 +497,7 @@ fused_Transpose
 
         for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
             for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                float real = filteredData[minorTime][channel].real() * bandPassCorrectionWeights[channel];
-                float imag = filteredData[minorTime][channel].imag() * bandPassCorrectionWeights[channel];
-                filteredData[minorTime][channel] = {real, imag};
+                filteredData[minorTime][channel] *= bandPassCorrectionWeights[channel];
             }
         }
     }
@@ -544,15 +506,12 @@ fused_Transpose
 
     for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
         for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
-            float sample_r = filteredData[minorTime][channel].real();
-            float sample_i = filteredData[minorTime][channel].imag();
+            correctedData[channel][input][majorTime + minorTime] = filteredData[minorTime][channel];
 
             if (delay_compensation) {
-                cmul(sample_r, sample_i, sample_r, sample_i, v[REAL][channel], v[IMAG][channel]);
-                cmul(v[REAL][channel], v[IMAG][channel], v[REAL][channel], v[IMAG][channel], dv[REAL][channel], dv[IMAG][channel]);
+                correctedData[channel][input][majorTime + minorTime] *= v[channel];
+                v[channel] *= dv[channel];
             }
-
-            correctedData[channel][input][majorTime + minorTime] = {sample_r, sample_i};
         }
     }
 }
