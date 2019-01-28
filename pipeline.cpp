@@ -66,11 +66,11 @@ typedef boost::multi_array<double, 1> DelaysType;
 static const auto DelaysDims = boost::extents[NR_INPUTS];
 typedef boost::multi_array<std::complex<float>, 3> CorrectedDataType;
 static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS][NR_SAMPLES_PER_CHANNEL];
-typedef boost::multi_array<float, 3> VisibilitiesType;
-static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][COMPLEX][NR_BASELINES];
+typedef boost::multi_array<std::complex<float>, 2> VisibilitiesType;
+static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][NR_BASELINES];
 
-typedef boost::multi_array<float, 3> HistoryType;
-static const auto HistoryDims = boost::extents[COMPLEX][NR_TAPS][NR_CHANNELS];
+typedef boost::multi_array<std::complex<float>, 2> HistoryType;
+static const auto HistoryDims = boost::extents[NR_TAPS][NR_CHANNELS];
 typedef boost::multi_array<std::complex<float>, 2> FusedFilterType;
 static const auto FusedFilterDims = boost::extents[NR_SAMPLES_PER_MINOR_LOOP][NR_CHANNELS];
 typedef boost::multi_array<float, 2> ComplexChannelType;
@@ -139,28 +139,31 @@ FIR_filter
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
             HistoryType history(HistoryDims);
+            float real, imag;
 
-            for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++)
-                for (unsigned time = 0; time < NR_TAPS - 1; time ++)
-                    for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                        history[real_imag][time][channel] = inputData[input][real_imag][time][channel];
+            for (unsigned time = 0; time < NR_TAPS - 1; time ++) {
+                for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
+                    real = inputData[input][REAL][time][channel];
+                    imag = inputData[input][IMAG][time][channel];
+                    history[time][channel] = {real, imag};
+                }
+            }
 
             for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
-                    for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                        history[real_imag][(time - 1) % NR_TAPS][channel] = inputData[input][real_imag][time + NR_TAPS - 1][channel];
+                for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
+                    real = inputData[input][REAL][time + NR_TAPS - 1][channel];
+                    imag = inputData[input][IMAG][time + NR_TAPS - 1][channel];
+                    history[(time - 1) % NR_TAPS][channel] = {real, imag};
 
-                        float sum = 0;
+                    float sumr = 0;
+                    float sumi = 0;
 
-                        for (unsigned tap = 0; tap < NR_TAPS; tap ++)
-                            sum += filterWeights[tap][channel] * history[real_imag][(time + tap) % NR_TAPS][channel];
-
-                        if (real_imag == REAL) {
-                            filteredData[input][time][channel] = {sum, filteredData[input][time][channel].imag()};
-                        } else {
-                            filteredData[input][time][channel] = {filteredData[input][time][channel].real(), sum};
-                        }
+                    for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
+                        sumr += filterWeights[tap][channel] * history[(time + tap) % NR_TAPS][channel].real();
+                        sumi += filterWeights[tap][channel] * history[(time + tap) % NR_TAPS][channel].imag();
                     }
+
+                    filteredData[input][time][channel] = {sumr, sumi};
                 }
             }
         }
@@ -436,10 +439,13 @@ fused_FIRfilterInit
 {
     // fill FIR filter history
 
-    for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++)
-        for (unsigned time = 0; time < NR_TAPS - 1; time ++)
-            for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                history[real_imag][time][channel] = inputData[input][real_imag][time][channel];
+    for (unsigned time = 0; time < NR_TAPS - 1; time ++) {
+        for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
+            float real = inputData[input][REAL][time][channel];
+            float imag = inputData[input][IMAG][time][channel];
+            history[time][channel] = {real, imag};
+        }
+    }
 }
 
 
@@ -454,22 +460,20 @@ fused_FIRfilter
 )
 {
     for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
-        for (unsigned real_imag = 0; real_imag < COMPLEX; real_imag ++) {
-            //#pragma vector aligned // why does specifying this yields wrong results ???
-            for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                history[real_imag][(minorTime - 1) % NR_TAPS][channel] = inputData[input][real_imag][majorTime + minorTime + NR_TAPS - 1][channel];
+        for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
+            float real = inputData[input][REAL][majorTime + minorTime + NR_TAPS - 1][channel];
+            float imag = inputData[input][IMAG][majorTime + minorTime + NR_TAPS - 1][channel];
+            history[(minorTime - 1) % NR_TAPS][channel] = {real, imag};
 
-                float sum = 0;
+            float sumr = 0;
+            float sumi = 0;
 
-                for (unsigned tap = 0; tap < NR_TAPS; tap ++)
-                    sum += filterWeights[tap][channel] * history[real_imag][(minorTime + tap) % NR_TAPS][channel];
-
-                if (real_imag == IMAG) {
-                    filteredData[minorTime][channel] = {filteredData[minorTime][channel].real(), sum};
-                } else {
-                    filteredData[minorTime][channel] = {sum, filteredData[minorTime][channel].imag()};
-                }
+            for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
+                sumr += filterWeights[tap][channel] * history[(minorTime + tap) % NR_TAPS][channel].real();
+                sumi += filterWeights[tap][channel] * history[(minorTime + tap) % NR_TAPS][channel].imag();
             }
+
+            filteredData[minorTime][channel] = {sumr, sumi};
         }
     }
 }
@@ -654,8 +658,7 @@ correlate(const CorrectedDataType& correctedData)
                     }
 
                     int baseline = statX * (statX + 1) / 2 + statY;
-                    visibilities[channel][REAL][baseline] = sum_real;
-                    visibilities[channel][IMAG][baseline] = sum_imag;
+                    visibilities[channel][baseline] = {sum_real, sum_imag};
                 }
             }
         }
@@ -670,10 +673,10 @@ checkCorrelatorTestPattern(const VisibilitiesType& visibilities)
 {
     for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
         for (unsigned baseline = 0; baseline < NR_BASELINES; baseline ++)
-            if (visibilities[channel][REAL][baseline] != 0.0f || visibilities[channel][IMAG][baseline] != 0.0f) {
+            if (visibilities[channel][baseline].real() != 0.0f || visibilities[channel][baseline].imag() != 0.0f) {
                 cout << "channel = " << channel << ", baseline = " << baseline
-                     << ", visibility = (" << visibilities[channel][REAL][baseline]
-                     << ',' << visibilities[channel][IMAG][baseline] << ')'
+                     << ", visibility = (" << visibilities[channel][baseline].real()
+                     << ',' << visibilities[channel][baseline].imag() << ')'
                      << std::endl;
             }
 }
