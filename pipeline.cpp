@@ -21,12 +21,6 @@
 
 #include <boost/multi_array.hpp>
 
-#ifdef USE_FUSED_FILTER
-#undef USE_FUSED_FILTER
-#define USE_FUSED_FILTER true
-#else
-#define USE_FUSED_FILTER false
-#endif
 #ifdef DELAY_COMPENSATION
 #undef DELAY_COMPENSATION
 #define DELAY_COMPENSATION true
@@ -77,7 +71,6 @@ static const auto FusedFilterDims = boost::extents[NR_SAMPLES_PER_MINOR_LOOP][NR
 typedef boost::multi_array<std::complex<float>, 1> ComplexChannelType;
 static const auto ComplexChannelDims = boost::extents[NR_CHANNELS];
 
-static bool use_fused_filter = USE_FUSED_FILTER;
 static bool delay_compensation = DELAY_COMPENSATION;
 static bool bandpass_correction = BANDPASS_CORRECTION;
 
@@ -394,7 +387,30 @@ testTranspose(FilteredDataType& filteredData)
 }
 
 
-//////
+////// non-fused
+
+static CorrectedDataType
+nonfused
+( const InputDataType& inputData
+, const FilterWeightsType& filterWeights
+, const BandPassCorrectionWeights& bandPassCorrectionWeights
+, const DelaysType& delaysAtBegin
+, const DelaysType& delaysAfterEnd
+, double subbandFrequency
+)
+{
+    auto filteredData = FIR_filter(inputData, filterWeights);
+    FFT(filteredData);
+    auto result = transpose(filteredData, bandPassCorrectionWeights);
+
+    if (delay_compensation) {
+        applyDelays(result, delaysAtBegin, delaysAfterEnd, subbandFrequency);
+    }
+
+    return result;
+}
+
+////// -fused
 
 static void
 fused_FIRfilterInit
@@ -653,41 +669,6 @@ testCorrelator(CorrectedDataType& correctedData)
 }
 
 
-static VisibilitiesType
-pipeline(double subbandFrequency)
-{
-    CorrectedDataType correctedData(CorrectedDataDims);
-
-    const auto& bandPassCorrectionWeights = bandPassTestPattern();
-    const auto& delaysAtBegin = delaysTestPattern(true);
-    const auto& delaysAfterEnd = delaysTestPattern(false);
-    const auto& inputData = inputTestPattern();
-    const auto& filterWeights = filterWeightsTestPattern();
-    VisibilitiesType result(VisibilitiesDims);
-
-#pragma omp critical (XeonPhi)
-    {
-        if (!use_fused_filter) {
-            auto filteredData = FIR_filter(inputData, filterWeights);
-            FFT(filteredData);
-            correctedData = transpose(filteredData, bandPassCorrectionWeights);
-
-            if (delay_compensation) {
-                applyDelays(correctedData, delaysAtBegin, delaysAfterEnd, subbandFrequency);
-            }
-        } else {
-            correctedData = fused(inputData, filterWeights,
-                    bandPassCorrectionWeights,
-                    delaysAtBegin, delaysAfterEnd, subbandFrequency);
-        }
-
-        result = correlate(correctedData);
-    }
-
-    return result;
-}
-
-
 int main(int, char **)
 {
     static_assert(NR_CHANNELS % 16 == 0);
@@ -704,9 +685,33 @@ int main(int, char **)
 
     omp_set_nested(1);
 
-    auto visibilities = pipeline(60e6);
-    cout << std::endl;
-    checkCorrelatorTestPattern(visibilities);
+    {
+        const auto& bandPassCorrectionWeights = bandPassTestPattern();
+        const auto& delaysAtBegin = delaysTestPattern(true);
+        const auto& delaysAfterEnd = delaysTestPattern(false);
+        const auto& inputData = inputTestPattern();
+        const auto& filterWeights = filterWeightsTestPattern();
+
+        //non-fused version
+        const auto& correctedData = nonfused(inputData, filterWeights,
+                    bandPassCorrectionWeights,
+                    delaysAtBegin, delaysAfterEnd,
+                    60e6);
+
+
+        //fused version
+        const auto& fusedCorrectedData = fused(inputData, filterWeights,
+                    bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd,
+                    60e6);
+
+        if (correctedData != fusedCorrectedData) {
+            cout << "Error!" << std::endl;
+        }
+
+        const auto& visibilities = correlate(correctedData);
+        cout << std::endl;
+        checkCorrelatorTestPattern(visibilities);
+    }
 
     fftDestroy();
     return 0;

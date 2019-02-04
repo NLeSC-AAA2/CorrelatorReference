@@ -23,9 +23,8 @@ ifeq ($(CXX), clang++)
     LDFLAGS+=-stdlib=libc++
 endif
 
-VARIANTS := pipeline-fused-delay-bandpass pipeline-fused-bandpass \
-    pipeline-fused-delay pipeline-fused-none pipeline-delay-bandpass \
-    pipeline-bandpass pipeline-delay pipeline-none
+VARIANTS := pipeline-delay-bandpass pipeline-bandpass pipeline-delay \
+    pipeline-none
 .PRECIOUS: $(VARIANTS:%=$(OUTDIR)/%.test)
 
 if-contains = $(if $(findstring $(2),$(1)), $(3))
@@ -33,9 +32,6 @@ if-contains = $(if $(findstring $(2),$(1)), $(3))
 all: $(VARIANTS)
 
 test: $(VARIANTS:pipeline-%=test-%)
-
-test-fused-%: $(OUTDIR)/pipeline-fused-%.test
-	diff -q $(OUTDIR)/$*.reference $<
 
 test-%: $(OUTDIR)/pipeline-%.test
 	diff -q $(OUTDIR)/$*.reference $<
@@ -45,8 +41,7 @@ clean:
 
 CFLAGS+=$(WARNINGS)
 
-pipeline-%.o: CFLAGS+=$(call if-contains,$*,fused,-DUSE_FUSED_FILTER) \
-    $(call if-contains,$*,delay,-DDELAY_COMPENSATION) \
+pipeline-%.o: CFLAGS+=$(call if-contains,$*,delay,-DDELAY_COMPENSATION) \
     $(call if-contains,$*,bandpass,-DBANDPASS_CORRECTION)
 
 pipeline-%.o: pipeline.cpp
