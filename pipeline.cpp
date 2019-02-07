@@ -70,6 +70,7 @@ static const auto ComplexChannelDims = boost::extents[NR_CHANNELS];
 
 static const bool delay_compensation = DELAY_COMPENSATION;
 static const bool bandpass_correction = BANDPASS_CORRECTION;
+static const bool output_check = true;
 
 ////// FIR filter
 
@@ -180,7 +181,7 @@ testFIR_Filter()
 {
     const auto& filteredData = FIR_filter(inputTestPattern(), filterWeightsTestPattern());
 
-    checkFIR_FilterTestPattern(filteredData);
+    if (output_check) checkFIR_FilterTestPattern(filteredData);
     return filteredData;
 }
 
@@ -379,7 +380,7 @@ testTranspose(FilteredDataType& filteredData)
         applyDelays(correctedData, delaysTestPattern(true), delaysTestPattern(false), 60e6);
     }
 
-    checkTransposeTestPattern(correctedData);
+    if (output_check) checkTransposeTestPattern(correctedData);
     return correctedData;
 }
 
@@ -593,7 +594,7 @@ testFused()
             bandPassTestPattern(true),
             delaysTestPattern(true, true), delaysTestPattern(false, true), 60e6);
 
-    checkFusedTestPattern(correctedData);
+    if (output_check) checkFusedTestPattern(correctedData);
 }
 
 
@@ -658,7 +659,7 @@ testCorrelator(CorrectedDataType& correctedData)
 
     auto visibilities = correlate(correctedData);
 
-    checkCorrelatorTestPattern(visibilities);
+    if (output_check) checkCorrelatorTestPattern(visibilities);
 }
 
 
@@ -702,8 +703,10 @@ int main(int, char **)
         }
 
         const auto& visibilities = correlate(correctedData);
-        cout << std::endl;
-        checkCorrelatorTestPattern(visibilities);
+        if (output_check) {
+            cout << std::endl;
+            checkCorrelatorTestPattern(visibilities);
+        }
     }
 
     fftDestroy();
