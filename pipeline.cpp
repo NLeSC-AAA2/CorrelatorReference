@@ -238,7 +238,7 @@ delaysTestPattern(bool isBegin, bool isFused = false)
     DelaysType result(DelaysDims);
     std::fill_n(result.data(), result.num_elements(), 0);
 
-    if (!isBegin && !isFused && NR_INPUTS > 22)
+    if (delay_compensation && !isBegin && !isFused && NR_INPUTS > 22)
         result[22] = 1e-6;
 
     return result;
@@ -329,9 +329,7 @@ testTranspose(FilteredDataType& filteredData)
 
     auto correctedData = transpose(filteredData, bandPassCorrectionWeights);
 
-    if (delay_compensation) {
-        applyDelays(correctedData, delaysTestPattern(true), delaysTestPattern(false), 60e6);
-    }
+    applyDelays(correctedData, delaysTestPattern(true), delaysTestPattern(false), 60e6);
 
     if (output_check) checkTransposeTestPattern(correctedData);
     return correctedData;
@@ -474,9 +472,7 @@ nonfused
     FFT(filteredData);
     auto result = transpose(filteredData, bandPassCorrectionWeights);
 
-    if (delay_compensation) {
-        applyDelays(result, delaysAtBegin, delaysAfterEnd, subbandFrequency);
-    }
+    applyDelays(result, delaysAtBegin, delaysAfterEnd, subbandFrequency);
 
     return result;
 }
@@ -620,11 +616,9 @@ fused
             ComplexChannelType v(ComplexChannelDims);
             ComplexChannelType dv(ComplexChannelDims);
 
-            if (delay_compensation) {
-                fused_TransposeInit(v, dv,
-                        bandPassCorrectionWeights,
-                        delaysAtBegin, delaysAfterEnd, subbandFrequency, input);
-            }
+            fused_TransposeInit(v, dv,
+                    bandPassCorrectionWeights,
+                    delaysAtBegin, delaysAfterEnd, subbandFrequency, input);
 
             fused_FIRfilterInit(inputData, history, input);
 
