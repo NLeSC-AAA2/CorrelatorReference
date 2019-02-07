@@ -225,7 +225,7 @@ bandPassTestPattern(bool isFused = false)
     BandPassCorrectionWeights result(BandPassCorrectionWeightsDims);
     std::fill_n(result.data(), result.num_elements(), 1);
 
-    if (!isFused && NR_CHANNELS > 5)
+    if (bandpass_correction && !isFused && NR_CHANNELS > 5)
         result[5] = 2;
 
     return result;
@@ -325,10 +325,7 @@ testTranspose(FilteredDataType& filteredData)
         filteredData[22][99][5] = {2, 3};
     }
 
-    BandPassCorrectionWeights bandPassCorrectionWeights(BandPassCorrectionWeightsDims);
-    if (bandpass_correction) {
-        bandPassCorrectionWeights = bandPassTestPattern();
-    }
+    auto bandPassCorrectionWeights = bandPassTestPattern();
 
     auto correctedData = transpose(filteredData, bandPassCorrectionWeights);
 
@@ -421,9 +418,7 @@ transpose
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
                     correctedData[channel][input][time] = filteredData[input][time][channel];
 
-                    if (bandpass_correction) {
-                        correctedData[channel][input][time] *= bandPassCorrectionWeights[channel];
-                    }
+                    correctedData[channel][input][time] *= bandPassCorrectionWeights[channel];
                 }
             }
         }
@@ -563,9 +558,7 @@ fused_TransposeInit
         v[channel] = std::polar(1.0f, myPhiBegin);
         dv[channel] = std::polar(1.0f, myPhiDelta);
 
-        if (bandpass_correction) {
-            v[channel] *= bandPassCorrectionWeights[channel];
-        }
+        v[channel] *= bandPassCorrectionWeights[channel];
     }
 }
 
@@ -581,7 +574,7 @@ fused_Transpose
 , unsigned majorTime
 )
 {
-    if (bandpass_correction && !delay_compensation) {
+    if (!delay_compensation) {
         // BandPass correction, if not doing delay compensation
 
         for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
