@@ -71,8 +71,8 @@ static const auto FusedFilterDims = boost::extents[NR_SAMPLES_PER_MINOR_LOOP][NR
 typedef boost::multi_array<std::complex<float>, 1> ComplexChannelType;
 static const auto ComplexChannelDims = boost::extents[NR_CHANNELS];
 
-static bool delay_compensation = DELAY_COMPENSATION;
-static bool bandpass_correction = BANDPASS_CORRECTION;
+static const bool delay_compensation = DELAY_COMPENSATION;
+static const bool bandpass_correction = BANDPASS_CORRECTION;
 
 ////// FIR filter
 
