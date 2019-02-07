@@ -42,15 +42,12 @@ constexpr double SUBBAND_BANDWIDTH = 195312.5;
 constexpr int NR_TAPS = 16;
 constexpr int NR_BASELINES = NR_INPUTS * (NR_INPUTS + 1) / 2;
 constexpr int NR_SAMPLES_PER_MINOR_LOOP = 64;
-constexpr int REAL = 0;
-constexpr int IMAG = 1;
-constexpr int COMPLEX = 2;
 
 using std::cout, std::cerr;
 using namespace std::complex_literals;
 
-typedef boost::multi_array<int8_t, 4> InputDataType;
-static const auto InputDataDims = boost::extents[NR_INPUTS][COMPLEX][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS];
+typedef boost::multi_array<std::complex<float>, 3> InputDataType;
+static const auto InputDataDims = boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS];
 typedef boost::multi_array<std::complex<float>, 3> FilteredDataType;
 static const auto FilteredDataDims = boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][NR_CHANNELS];
 typedef boost::multi_array<float, 2> FilterWeightsType;
@@ -84,20 +81,25 @@ inputTestPattern(bool isFused = false)
     if (isFused) {
         std::fill_n(result.data(), result.num_elements(), 0);
         if (NR_INPUTS > 6 && NR_SAMPLES_PER_CHANNEL > 27 && NR_CHANNELS > 12) {
-            result[6][REAL][27 + NR_TAPS - 1][12] = 2;
-            result[6][IMAG][27 + NR_TAPS - 1][12] = 3;
+            result[6][27 + NR_TAPS - 1][12] = {2, 3};
         }
     } else {
+        const int totalTime = NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1;
         signed char count = 64;
-        for (unsigned input = 0; input < NR_INPUTS; input ++)
-            for (unsigned ri = 0; ri < COMPLEX; ri ++)
-                for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1; time ++)
-                    for (unsigned channel = 0; channel < NR_CHANNELS; channel ++)
-                        result[input][ri][time][channel] = count ++;
+        for (unsigned input = 0; input < NR_INPUTS; input ++) {
+            for (unsigned time = 0; time < totalTime; time ++) {
+                for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
+                    result[input][time][channel] = std::complex<float>(count, static_cast<signed char>(totalTime * NR_CHANNELS + count));
+                    count++;
+                }
+            }
+
+            count += totalTime * NR_CHANNELS;
+        }
 
         if (NR_INPUTS > 9 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 12) {
-            result[9][REAL][98 + NR_TAPS - 1][12] = 4;
-            result[9][REAL][99 + NR_TAPS - 1][12] = 5;
+            result[9][98 + NR_TAPS - 1][12] = {4, result[9][98 + NR_TAPS - 1][12].imag()};
+            result[9][99 + NR_TAPS - 1][12] = {5, result[9][99 + NR_TAPS - 1][12].imag()};
         }
     }
 
@@ -133,21 +135,16 @@ FIR_filter
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
             HistoryType history(HistoryDims);
-            float real, imag;
 
             for (unsigned time = 0; time < NR_TAPS - 1; time ++) {
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                    real = inputData[input][REAL][time][channel];
-                    imag = inputData[input][IMAG][time][channel];
-                    history[time][channel] = {real, imag};
+                    history[time][channel] = inputData[input][time][channel];
                 }
             }
 
             for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                    real = inputData[input][REAL][time + NR_TAPS - 1][channel];
-                    imag = inputData[input][IMAG][time + NR_TAPS - 1][channel];
-                    history[(time - 1) % NR_TAPS][channel] = {real, imag};
+                    history[(time - 1) % NR_TAPS][channel] = inputData[input][time + NR_TAPS - 1][channel];
 
                     filteredData[input][time][channel] = {0, 0};
 
@@ -410,7 +407,7 @@ nonfused
     return result;
 }
 
-////// -fused
+////// fused
 
 static void
 fused_FIRfilterInit
@@ -423,9 +420,7 @@ fused_FIRfilterInit
 
     for (unsigned time = 0; time < NR_TAPS - 1; time ++) {
         for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-            float real = inputData[input][REAL][time][channel];
-            float imag = inputData[input][IMAG][time][channel];
-            history[time][channel] = {real, imag};
+            history[time][channel] = inputData[input][time][channel];
         }
     }
 }
@@ -443,9 +438,7 @@ fused_FIRfilter
 {
     for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
         for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-            float real = inputData[input][REAL][majorTime + minorTime + NR_TAPS - 1][channel];
-            float imag = inputData[input][IMAG][majorTime + minorTime + NR_TAPS - 1][channel];
-            history[(minorTime - 1) % NR_TAPS][channel] = {real, imag};
+            history[(minorTime - 1) % NR_TAPS][channel] = inputData[input][majorTime + minorTime + NR_TAPS - 1][channel];
 
             std::complex<float> sum = {0, 0};
 
