@@ -3,23 +3,10 @@
 // Licensed under the Apache License, version 2.0. See LICENSE for details.
 #include <complex>
 #include <iostream>
-#include <stdexcept>
-
-#include <cassert>
-#include <cmath>
-#include <cstdio>
-#include <cstdint>
-#include <cstring>
-
-#include <fcntl.h>
-#include <immintrin.h>
-#include <mkl.h>
-#include <omp.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 #include <boost/multi_array.hpp>
+#include <mkl.h>
+#include <omp.h>
 
 #ifdef DELAY_COMPENSATION
 #undef DELAY_COMPENSATION
