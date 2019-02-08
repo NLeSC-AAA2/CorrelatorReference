@@ -1,5 +1,5 @@
 .DELETE_ON_ERROR:
-.PHONY: all test test-% clean
+.PHONY: all test test-% time time-% clean
 
 V = 0
 AT_0 := @
@@ -35,6 +35,11 @@ test: $(VARIANTS:pipeline-%=test-%)
 
 test-%: $(OUTDIR)/pipeline-%.test
 	diff -q $(OUTDIR)/$*.reference $<
+
+time: $(VARIANTS:pipeline-%=time-%)
+
+time-%: pipeline-%
+	$(AT)prun -np 1 time -f "$*: real = %e, user = %U, sys = %S" ./$< time
 
 clean:
 	$(AT)rm $(VARIANTS)

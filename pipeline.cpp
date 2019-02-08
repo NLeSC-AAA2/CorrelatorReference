@@ -70,7 +70,7 @@ static const auto ComplexChannelDims = boost::extents[NR_CHANNELS];
 
 static const bool delay_compensation = DELAY_COMPENSATION;
 static const bool bandpass_correction = BANDPASS_CORRECTION;
-static const bool output_check = true;
+static bool output_check = true;
 
 static FilteredDataType
 FIR_filter(const InputDataType&, const FilterWeightsType&);
@@ -674,8 +674,9 @@ correlate(const CorrectedDataType& correctedData)
 }
 
 
-int main(int, char **)
+int main(int argc, char **)
 {
+    if (argc > 1) output_check = false;
     static_assert(NR_CHANNELS % 16 == 0);
     static_assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);
 
