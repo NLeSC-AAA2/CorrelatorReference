@@ -35,7 +35,6 @@
 #endif
 
 constexpr int NR_INPUTS = 2 * 576;
-
 constexpr int NR_CHANNELS = 64;
 constexpr int NR_SAMPLES_PER_CHANNEL = 3072;
 constexpr double SUBBAND_BANDWIDTH = 195312.5;
@@ -61,8 +60,6 @@ static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS][NR_
 typedef boost::multi_array<std::complex<float>, 2> VisibilitiesType;
 static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][NR_BASELINES];
 
-typedef boost::multi_array<std::complex<float>, 2> HistoryType;
-static const auto HistoryDims = boost::extents[NR_TAPS][NR_CHANNELS];
 typedef boost::multi_array<std::complex<float>, 2> FusedFilterType;
 static const auto FusedFilterDims = boost::extents[NR_SAMPLES_PER_MINOR_LOOP][NR_CHANNELS];
 typedef boost::multi_array<std::complex<float>, 1> ComplexChannelType;
@@ -375,22 +372,13 @@ FIR_filter
     {
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
-            HistoryType history(HistoryDims);
-
-            for (unsigned time = 0; time < NR_TAPS - 1; time ++) {
-                for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                    history[time][channel] = inputData[input][time][channel];
-                }
-            }
-
             for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                    history[(time - 1) % NR_TAPS][channel] = inputData[input][time + NR_TAPS - 1][channel];
-
                     filteredData[input][time][channel] = {0, 0};
 
                     for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
-                        filteredData[input][time][channel] += filterWeights[tap][channel] * history[(time + tap) % NR_TAPS][channel];
+                        filteredData[input][time][channel] +=
+                            filterWeights[tap][channel] * inputData[input][time + tap][channel];
                     }
                 }
             }
@@ -481,27 +469,9 @@ nonfused
 ////// fused
 
 static void
-fused_FIRfilterInit
-( const InputDataType& inputData
-, HistoryType& history
-, unsigned input
-)
-{
-    // fill FIR filter history
-
-    for (unsigned time = 0; time < NR_TAPS - 1; time ++) {
-        for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-            history[time][channel] = inputData[input][time][channel];
-        }
-    }
-}
-
-
-static void
 fused_FIRfilter
 ( const InputDataType& inputData
 , const FilterWeightsType& filterWeights
-, HistoryType& history
 , FusedFilterType& filteredData
 , unsigned input
 , unsigned majorTime
@@ -509,12 +479,10 @@ fused_FIRfilter
 {
     for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
         for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-            history[(minorTime - 1) % NR_TAPS][channel] = inputData[input][majorTime + minorTime + NR_TAPS - 1][channel];
-
             std::complex<float> sum = {0, 0};
 
             for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
-                sum += filterWeights[tap][channel] * history[(minorTime + tap) % NR_TAPS][channel];
+                sum += filterWeights[tap][channel] * inputData[input][majorTime + minorTime + tap][channel];
             }
 
             filteredData[minorTime][channel] = sum;
@@ -610,7 +578,6 @@ fused
     {
 #pragma omp for schedule(dynamic)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
-            HistoryType history(HistoryDims);
             FusedFilterType filteredData(FusedFilterDims);
 
             ComplexChannelType v(ComplexChannelDims);
@@ -620,10 +587,8 @@ fused
                     bandPassCorrectionWeights,
                     delaysAtBegin, delaysAfterEnd, subbandFrequency, input);
 
-            fused_FIRfilterInit(inputData, history, input);
-
             for (unsigned majorTime = 0; majorTime < NR_SAMPLES_PER_CHANNEL; majorTime += NR_SAMPLES_PER_MINOR_LOOP) {
-                fused_FIRfilter(inputData, filterWeights, history, filteredData, input, majorTime);
+                fused_FIRfilter(inputData, filterWeights, filteredData, input, majorTime);
                 fused_FFT(filteredData);
                 fused_Transpose(correctedData, bandPassCorrectionWeights, filteredData,
                         v, dv,
