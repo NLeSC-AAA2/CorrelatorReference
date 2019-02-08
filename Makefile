@@ -6,6 +6,7 @@ AT_0 := @
 AT_1 :=
 AT = $(AT_$(V))
 OUTDIR?=/var/scratch/mverstra/pipeline
+BUILDDIR?=./.build
 
 ifeq ($(V), 1)
     PRINTF := @\#
@@ -13,7 +14,8 @@ else
     PRINTF := @printf
 endif
 
-WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wno-unknown-pragmas -std=c++17
+CFLAGS := -MMD -MP -g -O3 -std=c++17
+WARNINGS := -Wall -Wextra -Wpedantic -Wconversion -Wno-unknown-pragmas
 
 ifeq ($(CXX), clang++)
     WARNINGS+=-Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic \
@@ -46,16 +48,26 @@ clean:
 
 CFLAGS+=$(WARNINGS)
 
-pipeline-%.o: CFLAGS+=$(call if-contains,$*,delay,-DDELAY_COMPENSATION) \
+-include $(patsubst %.cpp, .build/%.d, $(wildcard *.cpp))
+
+$(BUILDDIR)/:
+	$(AT)mkdir -p $@
+
+$(BUILDDIR)/correlator-%.o: CFLAGS+= \
+    $(call if-contains,$*,delay,-DDELAY_COMPENSATION) \
     $(call if-contains,$*,bandpass,-DBANDPASS_CORRECTION)
 
-pipeline-%.o: pipeline.cpp
+$(BUILDDIR)/correlator-%.o: correlator.cpp | $(BUILDDIR)/
 	$(PRINTF) " CC $<\n"
 	$(AT)$(CXX) $(CFLAGS) -fopenmp -g -O3 -c -o $@ $<
 
-pipeline-%: pipeline-%.o
+$(BUILDDIR)/pipeline.o: pipeline.cpp | $(BUILDDIR)/
+	$(PRINTF) " CC $<\n"
+	$(AT)$(CXX) $(CFLAGS) -fopenmp -g -O3 -c -o $@ $<
+
+pipeline-%: $(BUILDDIR)/pipeline.o $(BUILDDIR)/correlator-%.o
 	$(PRINTF) " LD $@\n"
-	$(AT)$(CXX) $(LDFLAGS) -fopenmp -o $@ $< -L$(MKL_LIB) -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread
+	$(AT)$(CXX) $(LDFLAGS) -fopenmp -o $@ $^ -L$(MKL_LIB) -lmkl_intel_lp64 -lmkl_core -lmkl_gnu_thread
 
 $(OUTDIR)/pipeline-%.test: pipeline-%
 	$(PRINTF) " TEST $<\n"

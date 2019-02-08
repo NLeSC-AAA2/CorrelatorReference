@@ -1,59 +1,15 @@
 // (C) 2013,2014,2015 John Romein/ASTRON
 // Copyright 2018-2019 Netherlands eScience Center and ASTRON
 // Licensed under the Apache License, version 2.0. See LICENSE for details.
-#include <complex>
 #include <iostream>
-
-#include <boost/multi_array.hpp>
-#include <mkl.h>
 #include <omp.h>
 
-#ifdef DELAY_COMPENSATION
-#undef DELAY_COMPENSATION
-#define DELAY_COMPENSATION true
-#else
-#define DELAY_COMPENSATION false
-#endif
-#ifdef BANDPASS_CORRECTION
-#undef BANDPASS_CORRECTION
-#define BANDPASS_CORRECTION true
-#else
-#define BANDPASS_CORRECTION false
-#endif
-
-constexpr int NR_INPUTS = 2 * 576;
-constexpr int NR_CHANNELS = 64;
-constexpr int NR_SAMPLES_PER_CHANNEL = 3072;
-constexpr double SUBBAND_BANDWIDTH = 195312.5;
-constexpr int NR_TAPS = 16;
-constexpr int NR_BASELINES = NR_INPUTS * (NR_INPUTS + 1) / 2;
-constexpr int NR_SAMPLES_PER_MINOR_LOOP = 64;
+#include "correlator.hpp"
 
 using std::cout, std::cerr;
 using namespace std::complex_literals;
+using namespace correlator;
 
-typedef boost::multi_array<std::complex<float>, 3> InputDataType;
-static const auto InputDataDims = boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS];
-typedef boost::multi_array<std::complex<float>, 3> FilteredDataType;
-static const auto FilteredDataDims = boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][NR_CHANNELS];
-typedef boost::multi_array<float, 2> FilterWeightsType;
-static const auto FilterWeightsDims = boost::extents[NR_TAPS][NR_CHANNELS];
-typedef boost::multi_array<float, 1> BandPassCorrectionWeights;
-static const auto BandPassCorrectionWeightsDims = boost::extents[NR_CHANNELS];
-typedef boost::multi_array<double, 1> DelaysType;
-static const auto DelaysDims = boost::extents[NR_INPUTS];
-typedef boost::multi_array<std::complex<float>, 3> CorrectedDataType;
-static const auto CorrectedDataDims = boost::extents[NR_CHANNELS][NR_INPUTS][NR_SAMPLES_PER_CHANNEL];
-typedef boost::multi_array<std::complex<float>, 2> VisibilitiesType;
-static const auto VisibilitiesDims = boost::extents[NR_CHANNELS][NR_BASELINES];
-
-typedef boost::multi_array<std::complex<float>, 2> FusedFilterType;
-static const auto FusedFilterDims = boost::extents[NR_SAMPLES_PER_MINOR_LOOP][NR_CHANNELS];
-typedef boost::multi_array<std::complex<float>, 1> ComplexChannelType;
-static const auto ComplexChannelDims = boost::extents[NR_CHANNELS];
-
-static const bool delay_compensation = DELAY_COMPENSATION;
-static const bool bandpass_correction = BANDPASS_CORRECTION;
 static bool output_check = true;
 
 static FilteredDataType
@@ -66,7 +22,7 @@ static void
 applyDelays(CorrectedDataType&, const DelaysType&, const DelaysType&, double);
 
 static CorrectedDataType
-fused
+fused_pipeline
 ( const InputDataType&
 , const FilterWeightsType&
 , const BandPassCorrectionWeights&
@@ -77,78 +33,6 @@ fused
 
 static VisibilitiesType
 correlate(const CorrectedDataType&);
-
-////// FFT
-
-static DFTI_DESCRIPTOR_HANDLE handle;
-
-static void
-fftInit()
-{
-    MKL_LONG error;
-
-    error = DftiCreateDescriptor(&handle, DFTI_SINGLE, DFTI_COMPLEX, 1, NR_CHANNELS);
-
-    if (error != DFTI_NO_ERROR) {
-        cerr << "DftiCreateDescriptor failed" << std::endl;
-        exit(1);
-    };
-
-    error = DftiSetValue(handle, DFTI_NUMBER_OF_TRANSFORMS, NR_SAMPLES_PER_MINOR_LOOP);
-
-    if (error != DFTI_NO_ERROR) {
-        cerr << "DftiSetValue failed" << std::endl;
-        exit(1);
-    }
-
-    error = DftiSetValue(handle, DFTI_INPUT_DISTANCE, NR_CHANNELS);
-
-    if (error != DFTI_NO_ERROR) {
-        cerr << "DftiSetValue failed" << std::endl;
-        exit(1);
-    }
-
-    error = DftiSetValue(handle, DFTI_OUTPUT_DISTANCE, NR_CHANNELS);
-
-    if (error != DFTI_NO_ERROR) {
-        cerr << "DftiSetValue failed" << std::endl;
-        exit(1);
-    }
-
-    error = DftiCommitDescriptor(handle);
-
-    if (error != DFTI_NO_ERROR) {
-        cerr << "DftiCommitDescriptor failed" << std::endl;
-        exit(1);
-    }
-}
-
-
-static void
-fftDestroy()
-{
-    MKL_LONG error;
-
-    error = DftiFreeDescriptor(&handle);
-
-    if (error != DFTI_NO_ERROR) {
-        cerr << "DftiFreeDescriptor failed" << std::endl;
-        exit(1);
-    }
-}
-
-
-static void
-FFT(FilteredDataType& filteredData)
-{
-#pragma omp parallel
-    {
-#pragma omp for collapse(2) schedule(dynamic)
-        for (int input = 0; input < NR_INPUTS; input ++)
-            for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time += NR_SAMPLES_PER_MINOR_LOOP)
-                DftiComputeForward(handle, filteredData[input][time].origin());
-    }
-}
 
 
 ////// Initialise data
@@ -323,7 +207,7 @@ testTranspose(FilteredDataType& filteredData)
 static void
 testFused()
 {
-    auto correctedData = fused(
+    auto correctedData = fused_pipeline(
             inputTestPattern(true), filterWeightsTestPattern(true),
             bandPassTestPattern(true),
             delaysTestPattern(true, true), delaysTestPattern(false, true), 60e6);
@@ -434,7 +318,7 @@ applyDelays
 
 
 static CorrectedDataType
-nonfused
+nonfused_pipeline
 ( const InputDataType& inputData
 , const FilterWeightsType& filterWeights
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
@@ -475,14 +359,6 @@ fused_FIRfilter
             filteredData[minorTime][channel] = sum;
         }
     }
-}
-
-
-static void
-fused_FFT(FusedFilterType& filteredData)
-{
-    // Do batch FFT instead of for-loop
-    DftiComputeForward(handle, filteredData[0].origin());
 }
 
 
@@ -551,7 +427,7 @@ fused_Transpose
 
 
 static CorrectedDataType
-fused
+fused_pipeline
 ( const InputDataType& inputData
 , const FilterWeightsType& filterWeights
 , const BandPassCorrectionWeights& bandPassCorrectionWeights
@@ -576,7 +452,7 @@ fused
 
             for (unsigned majorTime = 0; majorTime < NR_SAMPLES_PER_CHANNEL; majorTime += NR_SAMPLES_PER_MINOR_LOOP) {
                 fused_FIRfilter(inputData, filterWeights, filteredData, input, majorTime);
-                fused_FFT(filteredData);
+                fused::FFT(filteredData);
                 fused_Transpose(correctedData, bandPassCorrectionWeights, filteredData,
                         v, dv,
                         input, majorTime);
@@ -632,8 +508,6 @@ int main(int argc, char **)
     static_assert(NR_CHANNELS % 16 == 0);
     static_assert(NR_SAMPLES_PER_CHANNEL % NR_SAMPLES_PER_MINOR_LOOP == 0);
 
-    fftInit();
-
     {
         testFused();
         auto filteredData = testFIR_Filter();
@@ -651,16 +525,16 @@ int main(int argc, char **)
         const auto& filterWeights = filterWeightsTestPattern();
 
         //non-fused version
-        const auto& correctedData = nonfused(inputData, filterWeights,
+        const auto& correctedData = nonfused_pipeline(inputData, filterWeights,
                     bandPassCorrectionWeights,
                     delaysAtBegin, delaysAfterEnd,
                     60e6);
 
 
         //fused version
-        const auto& fusedCorrectedData = fused(inputData, filterWeights,
-                    bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd,
-                    60e6);
+        const auto& fusedCorrectedData = fused_pipeline(inputData,
+                    filterWeights, bandPassCorrectionWeights, delaysAtBegin,
+                    delaysAfterEnd, 60e6);
 
         if (correctedData != fusedCorrectedData) {
             cout << "Error!" << std::endl;
@@ -673,6 +547,5 @@ int main(int argc, char **)
         }
     }
 
-    fftDestroy();
     return 0;
 }
