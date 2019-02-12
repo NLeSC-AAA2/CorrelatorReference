@@ -133,7 +133,7 @@ FIR_filter
 
                     for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
                         filteredData[input][time][channel] +=
-                            filterWeights[tap][channel] * inputData[input][time + tap][channel];
+                            filterWeights[channel][tap] * inputData[input][channel][time + tap];
                     }
                 }
             }
@@ -274,7 +274,7 @@ FIR_filter
             std::complex<float> sum = {0, 0};
 
             for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
-                sum += filterWeights[tap][channel] * inputData[input][majorTime + minorTime + tap][channel];
+                sum += filterWeights[channel][tap] * inputData[input][channel][majorTime + minorTime + tap];
             }
 
             filteredData[minorTime][channel] = sum;

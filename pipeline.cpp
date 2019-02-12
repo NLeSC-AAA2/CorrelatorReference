@@ -23,7 +23,7 @@ inputTestPattern(bool isFused = false)
     if (isFused) {
         std::fill_n(result.data(), result.num_elements(), 0);
         if (NR_INPUTS > 6 && NR_SAMPLES_PER_CHANNEL > 27 && NR_CHANNELS > 12) {
-            result[6][27 + NR_TAPS - 1][12] = {2, 3};
+            result[6][12][27 + NR_TAPS - 1] = {2, 3};
         }
     } else {
         const int totalTime = NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1;
@@ -31,7 +31,7 @@ inputTestPattern(bool isFused = false)
         for (unsigned input = 0; input < NR_INPUTS; input ++) {
             for (unsigned time = 0; time < totalTime; time ++) {
                 for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                    result[input][time][channel] = std::complex<float>(count, static_cast<signed char>(totalTime * NR_CHANNELS + count));
+                    result[input][channel][time] = std::complex<float>(count, static_cast<signed char>(totalTime * NR_CHANNELS + count));
                     count++;
                 }
             }
@@ -40,8 +40,8 @@ inputTestPattern(bool isFused = false)
         }
 
         if (NR_INPUTS > 9 && NR_SAMPLES_PER_CHANNEL > 99 && NR_CHANNELS > 12) {
-            result[9][98 + NR_TAPS - 1][12] = {4, result[9][98 + NR_TAPS - 1][12].imag()};
-            result[9][99 + NR_TAPS - 1][12] = {5, result[9][99 + NR_TAPS - 1][12].imag()};
+            result[9][12][98 + NR_TAPS - 1] = {4, result[9][12][98 + NR_TAPS - 1].imag()};
+            result[9][12][99 + NR_TAPS - 1] = {5, result[9][12][99 + NR_TAPS - 1].imag()};
         }
     }
 
@@ -55,10 +55,10 @@ filterWeightsTestPattern(bool isFused = false)
     std::fill_n(result.data(), result.num_elements(), 0.0f);
 
     if (isFused && NR_TAPS > 11 && NR_CHANNELS > 12) {
-        result[15][12] = 2;
+        result[12][15] = 2;
     } else if (NR_TAPS > 4 && NR_CHANNELS > 12) {
-        result[15][12] = 2;
-        result[14][12] = 3;
+        result[12][15] = 2;
+        result[12][14] = 3;
     }
 
     return result;

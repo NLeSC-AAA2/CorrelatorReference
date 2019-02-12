@@ -15,11 +15,11 @@ constexpr int NR_BASELINES = NR_INPUTS * (NR_INPUTS + 1) / 2;
 constexpr int NR_SAMPLES_PER_MINOR_LOOP = 64;
 
 typedef boost::multi_array<std::complex<float>, 3> InputDataType;
-const auto InputDataDims = boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1][NR_CHANNELS];
+const auto InputDataDims = boost::extents[NR_INPUTS][NR_CHANNELS][NR_SAMPLES_PER_CHANNEL + NR_TAPS - 1];
 typedef boost::multi_array<std::complex<float>, 3> FilteredDataType;
 const auto FilteredDataDims = boost::extents[NR_INPUTS][NR_SAMPLES_PER_CHANNEL][NR_CHANNELS];
 typedef boost::multi_array<float, 2> FilterWeightsType;
-const auto FilterWeightsDims = boost::extents[NR_TAPS][NR_CHANNELS];
+const auto FilterWeightsDims = boost::extents[NR_CHANNELS][NR_TAPS];
 typedef boost::multi_array<float, 1> BandPassCorrectionWeights;
 const auto BandPassCorrectionWeightsDims = boost::extents[NR_CHANNELS];
 typedef boost::multi_array<double, 1> DelaysType;
