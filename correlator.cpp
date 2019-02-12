@@ -21,6 +21,8 @@
 namespace correlator
 {
 
+using namespace std::complex_literals;
+
 const bool delay_compensation = DELAY_COMPENSATION;
 const bool bandpass_correction = BANDPASS_CORRECTION;
 
@@ -229,22 +231,17 @@ correlate(const CorrectedDataType& correctedData)
         for (int channel = 0; channel < NR_CHANNELS; channel ++) {
             for (int statX = 0; statX < NR_INPUTS; statX ++) {
                 for (int statY = 0; statY <= statX; statY ++) {
-                    float sum_real = 0, sum_imag = 0;
+                    int baseline = statX * (statX + 1) / 2 + statY;
+
+                    visibilities[channel][baseline] = 0.0f + 0.0if;
 
                     for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                        float sample_X_real = correctedData[channel][statX][time].real();
-                        float sample_X_imag = correctedData[channel][statX][time].imag();
-                        float sample_Y_real = correctedData[channel][statY][time].real();
-                        float sample_Y_imag = correctedData[channel][statY][time].imag();
+                        auto sample_X = correctedData[channel][statX][time];
+                        auto sample_Y = correctedData[channel][statY][time];
 
-                        sum_real += sample_Y_real * sample_X_real;
-                        sum_imag += sample_Y_imag * sample_X_real;
-                        sum_real += sample_Y_imag * sample_X_imag;
-                        sum_imag = (sample_Y_real * sample_X_imag) - sum_imag;
+                        visibilities[channel][baseline] += std::conj(sample_X) * sample_Y;
                     }
 
-                    int baseline = statX * (statX + 1) / 2 + statY;
-                    visibilities[channel][baseline] = {sum_real, sum_imag};
                 }
             }
         }
