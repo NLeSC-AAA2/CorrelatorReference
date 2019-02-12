@@ -257,8 +257,8 @@ correlate(const CorrectedDataType& correctedData)
 namespace correlator::fused
 {
 void
-FFT(FusedFilterType& filteredData)
-{ fft(filteredData[0].origin()); }
+FFT(boost::multi_array_ref<std::complex<float>, 2>::reference filteredData)
+{ fft(filteredData.origin()); }
 
 void
 FIR_filter
@@ -371,7 +371,7 @@ pipeline
 
             for (unsigned majorTime = 0; majorTime < NR_SAMPLES_PER_CHANNEL; majorTime += NR_SAMPLES_PER_MINOR_LOOP) {
                 FIR_filter(inputData, filterWeights, filteredData, input, majorTime);
-                FFT(filteredData);
+                FFT(filteredData[0]);
                 transpose(correctedData, bandPassCorrectionWeights, filteredData,
                         v, dv, input, majorTime);
             }

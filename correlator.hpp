@@ -64,7 +64,8 @@ correlate(const CorrectedDataType&);
 
 namespace correlator::fused
 {
-void FFT(FusedFilterType&);
+void
+FFT(boost::multi_array_ref<std::complex<float>, 2>::reference);
 
 void
 FIR_filter
