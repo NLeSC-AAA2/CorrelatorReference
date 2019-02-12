@@ -2,7 +2,6 @@
 // Copyright 2018-2019 Netherlands eScience Center and ASTRON
 // Licensed under the Apache License, version 2.0. See LICENSE for details.
 #include <iostream>
-#include <omp.h>
 
 #include "correlator.hpp"
 
@@ -10,30 +9,9 @@ using std::cout, std::cerr;
 using namespace std::complex_literals;
 using namespace correlator;
 
-static bool output_check = true;
+namespace {
 
-static FilteredDataType
-FIR_filter(const InputDataType&, const FilterWeightsType&);
-
-static CorrectedDataType
-transpose(const FilteredDataType&, const BandPassCorrectionWeights&);
-
-static void
-applyDelays(CorrectedDataType&, const DelaysType&, const DelaysType&, double);
-
-static CorrectedDataType
-fused_pipeline
-( const InputDataType&
-, const FilterWeightsType&
-, const BandPassCorrectionWeights&
-, const DelaysType&
-, const DelaysType&
-, double
-);
-
-static VisibilitiesType
-correlate(const CorrectedDataType&);
-
+bool output_check = true;
 
 ////// Initialise data
 
@@ -207,7 +185,7 @@ testTranspose(FilteredDataType& filteredData)
 static void
 testFused()
 {
-    auto correctedData = fused_pipeline(
+    auto correctedData = fused::pipeline(
             inputTestPattern(true), filterWeightsTestPattern(true),
             bandPassTestPattern(true),
             delaysTestPattern(true, true), delaysTestPattern(false, true), 60e6);
@@ -228,277 +206,6 @@ testCorrelator(CorrectedDataType& correctedData)
 
     if (output_check) checkCorrelatorTestPattern(visibilities);
 }
-
-
-////// non-fused
-
-static FilteredDataType
-FIR_filter
-( const InputDataType& inputData
-, const FilterWeightsType& filterWeights
-)
-{
-    FilteredDataType filteredData(FilteredDataDims);
-#pragma omp parallel
-    {
-#pragma omp for schedule(dynamic)
-        for (unsigned input = 0; input < NR_INPUTS; input ++) {
-            for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                    filteredData[input][time][channel] = {0, 0};
-
-                    for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
-                        filteredData[input][time][channel] +=
-                            filterWeights[tap][channel] * inputData[input][time + tap][channel];
-                    }
-                }
-            }
-        }
-    }
-
-    return filteredData;
-}
-
-
-static CorrectedDataType
-transpose
-( const FilteredDataType& filteredData
-, const BandPassCorrectionWeights& bandPassCorrectionWeights
-)
-{
-    CorrectedDataType correctedData(CorrectedDataDims);
-#pragma omp parallel
-    {
-#pragma omp for schedule(dynamic)
-        for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-            for (unsigned input = 0; input < NR_INPUTS; input ++) {
-                for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                    correctedData[channel][input][time] = filteredData[input][time][channel];
-
-                    correctedData[channel][input][time] *= bandPassCorrectionWeights[channel];
-                }
-            }
-        }
-    }
-
-    return correctedData;
-}
-
-
-static void
-applyDelays
-( CorrectedDataType& correctedData
-, const DelaysType& delaysAtBegin
-, const DelaysType& delaysAfterEnd
-, double subbandFrequency
-)
-{
-#pragma omp parallel
-    {
-#pragma omp for collapse(2)
-        for (unsigned input = 0; input < NR_INPUTS; input ++) {
-            for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                double phiBegin = -2.0 * 3.141592653589793 * delaysAtBegin[input];
-                double phiEnd   = -2.0 * 3.141592653589793 * delaysAfterEnd[input];
-                double deltaPhi = (phiEnd - phiBegin) / NR_SAMPLES_PER_CHANNEL;
-                double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * (SUBBAND_BANDWIDTH / NR_CHANNELS);
-                float myPhiBegin = static_cast<float>((phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */);
-                float myPhiDelta = static_cast<float>(deltaPhi * channelFrequency);
-                std::complex<float> v = std::polar(1.0f, myPhiBegin);
-                std::complex<float> dv = std::polar(1.0f, myPhiDelta);
-
-                for (unsigned time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                    correctedData[channel][input][time] *= v;
-                    v *= dv;
-                }
-            }
-        }
-    }
-}
-
-
-static CorrectedDataType
-nonfused_pipeline
-( const InputDataType& inputData
-, const FilterWeightsType& filterWeights
-, const BandPassCorrectionWeights& bandPassCorrectionWeights
-, const DelaysType& delaysAtBegin
-, const DelaysType& delaysAfterEnd
-, double subbandFrequency
-)
-{
-    auto filteredData = FIR_filter(inputData, filterWeights);
-    FFT(filteredData);
-    auto result = transpose(filteredData, bandPassCorrectionWeights);
-
-    applyDelays(result, delaysAtBegin, delaysAfterEnd, subbandFrequency);
-
-    return result;
-}
-
-
-////// fused
-
-static void
-fused_FIRfilter
-( const InputDataType& inputData
-, const FilterWeightsType& filterWeights
-, FusedFilterType& filteredData
-, unsigned input
-, unsigned majorTime
-)
-{
-    for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
-        for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-            std::complex<float> sum = {0, 0};
-
-            for (unsigned tap = 0; tap < NR_TAPS; tap ++) {
-                sum += filterWeights[tap][channel] * inputData[input][majorTime + minorTime + tap][channel];
-            }
-
-            filteredData[minorTime][channel] = sum;
-        }
-    }
-}
-
-
-static void
-fused_TransposeInit
-( ComplexChannelType& v
-, ComplexChannelType& dv
-, const BandPassCorrectionWeights& bandPassCorrectionWeights
-, const DelaysType& delaysAtBegin
-, const DelaysType& delaysAfterEnd
-, double subbandFrequency
-, unsigned input
-)
-{
-    // prepare delay compensation: compute complex weights
-    double phiBegin = -2.0 * 3.141592653589793 * delaysAtBegin[input];
-    double phiEnd   = -2.0 * 3.141592653589793 * delaysAfterEnd[input];
-    double deltaPhi = (phiEnd - phiBegin) / NR_SAMPLES_PER_CHANNEL;
-
-    for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-        double channelFrequency = subbandFrequency - .5 * SUBBAND_BANDWIDTH + channel * (SUBBAND_BANDWIDTH / NR_CHANNELS);
-        float myPhiBegin = static_cast<float>((phiBegin /* + startTime * deltaPhi */) * channelFrequency /* + phaseOffsets[stationPol + major] */);
-        float myPhiDelta = static_cast<float>(deltaPhi * channelFrequency);
-        v[channel] = std::polar(1.0f, myPhiBegin);
-        dv[channel] = std::polar(1.0f, myPhiDelta);
-
-        v[channel] *= bandPassCorrectionWeights[channel];
-    }
-}
-
-
-static void
-fused_Transpose
-( CorrectedDataType& correctedData
-, const BandPassCorrectionWeights& bandPassCorrectionWeights
-, FusedFilterType& filteredData
-, ComplexChannelType& v
-, ComplexChannelType& dv
-, unsigned input
-, unsigned majorTime
-)
-{
-    if (!delay_compensation) {
-        // BandPass correction, if not doing delay compensation
-
-        for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
-            for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-                filteredData[minorTime][channel] *= bandPassCorrectionWeights[channel];
-            }
-        }
-    }
-
-    // Delay compensation & transpose
-
-    for (unsigned channel = 0; channel < NR_CHANNELS; channel ++) {
-        for (unsigned minorTime = 0; minorTime < NR_SAMPLES_PER_MINOR_LOOP; minorTime ++) {
-            correctedData[channel][input][majorTime + minorTime] = filteredData[minorTime][channel];
-
-            if (delay_compensation) {
-                correctedData[channel][input][majorTime + minorTime] *= v[channel];
-                v[channel] *= dv[channel];
-            }
-        }
-    }
-}
-
-
-static CorrectedDataType
-fused_pipeline
-( const InputDataType& inputData
-, const FilterWeightsType& filterWeights
-, const BandPassCorrectionWeights& bandPassCorrectionWeights
-, const DelaysType& delaysAtBegin
-, const DelaysType& delaysAfterEnd
-, double subbandFrequency
-)
-{
-    CorrectedDataType correctedData(CorrectedDataDims);
-#pragma omp parallel
-    {
-#pragma omp for schedule(dynamic)
-        for (unsigned input = 0; input < NR_INPUTS; input ++) {
-            FusedFilterType filteredData(FusedFilterDims);
-
-            ComplexChannelType v(ComplexChannelDims);
-            ComplexChannelType dv(ComplexChannelDims);
-
-            fused_TransposeInit(v, dv,
-                    bandPassCorrectionWeights,
-                    delaysAtBegin, delaysAfterEnd, subbandFrequency, input);
-
-            for (unsigned majorTime = 0; majorTime < NR_SAMPLES_PER_CHANNEL; majorTime += NR_SAMPLES_PER_MINOR_LOOP) {
-                fused_FIRfilter(inputData, filterWeights, filteredData, input, majorTime);
-                fused::FFT(filteredData);
-                fused_Transpose(correctedData, bandPassCorrectionWeights, filteredData,
-                        v, dv,
-                        input, majorTime);
-            }
-        }
-    }
-
-    return correctedData;
-}
-
-
-
-////// correlator
-
-static VisibilitiesType
-correlate(const CorrectedDataType& correctedData)
-{
-    VisibilitiesType visibilities(VisibilitiesDims);
-#pragma omp parallel
-    {
-#pragma omp for collapse(2) schedule(dynamic,16)
-        for (int channel = 0; channel < NR_CHANNELS; channel ++) {
-            for (int statX = 0; statX < NR_INPUTS; statX ++) {
-                for (int statY = 0; statY <= statX; statY ++) {
-                    float sum_real = 0, sum_imag = 0;
-
-                    for (int time = 0; time < NR_SAMPLES_PER_CHANNEL; time ++) {
-                        float sample_X_real = correctedData[channel][statX][time].real();
-                        float sample_X_imag = correctedData[channel][statX][time].imag();
-                        float sample_Y_real = correctedData[channel][statY][time].real();
-                        float sample_Y_imag = correctedData[channel][statY][time].imag();
-
-                        sum_real += sample_Y_real * sample_X_real;
-                        sum_imag += sample_Y_imag * sample_X_real;
-                        sum_real += sample_Y_imag * sample_X_imag;
-                        sum_imag = (sample_Y_real * sample_X_imag) - sum_imag;
-                    }
-
-                    int baseline = statX * (statX + 1) / 2 + statY;
-                    visibilities[channel][baseline] = {sum_real, sum_imag};
-                }
-            }
-        }
-    }
-
-    return visibilities;
 }
 
 
@@ -515,8 +222,6 @@ int main(int argc, char **)
         testCorrelator(correctedData);
     }
 
-    omp_set_nested(1);
-
     {
         const auto& bandPassCorrectionWeights = bandPassTestPattern();
         const auto& delaysAtBegin = delaysTestPattern(true);
@@ -525,14 +230,13 @@ int main(int argc, char **)
         const auto& filterWeights = filterWeightsTestPattern();
 
         //non-fused version
-        const auto& correctedData = nonfused_pipeline(inputData, filterWeights,
-                    bandPassCorrectionWeights,
-                    delaysAtBegin, delaysAfterEnd,
+        const auto& correctedData = pipeline(inputData, filterWeights,
+                    bandPassCorrectionWeights, delaysAtBegin, delaysAfterEnd,
                     60e6);
 
 
         //fused version
-        const auto& fusedCorrectedData = fused_pipeline(inputData,
+        const auto& fusedCorrectedData = fused::pipeline(inputData,
                     filterWeights, bandPassCorrectionWeights, delaysAtBegin,
                     delaysAfterEnd, 60e6);
 

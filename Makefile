@@ -59,11 +59,11 @@ $(BUILDDIR)/correlator-%.o: CFLAGS+= \
 
 $(BUILDDIR)/correlator-%.o: correlator.cpp | $(BUILDDIR)/
 	$(PRINTF) " CC $<\n"
-	$(AT)$(CXX) $(CFLAGS) -fopenmp -g -O3 -c -o $@ $<
+	$(AT)$(CXX) $(CFLAGS) -fopenmp -c -o $@ $<
 
 $(BUILDDIR)/pipeline.o: pipeline.cpp | $(BUILDDIR)/
 	$(PRINTF) " CC $<\n"
-	$(AT)$(CXX) $(CFLAGS) -fopenmp -g -O3 -c -o $@ $<
+	$(AT)$(CXX) $(CFLAGS) -c -o $@ $<
 
 pipeline-%: $(BUILDDIR)/pipeline.o $(BUILDDIR)/correlator-%.o
 	$(PRINTF) " LD $@\n"
